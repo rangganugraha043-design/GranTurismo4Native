@@ -1,0 +1,88 @@
+# External research notes
+
+Last reviewed: 2026-11-07
+
+This document records public research that can accelerate the Android ARM64 GT4 port. Links point to upstream projects; this repository does not copy game assets, BIOS files, or copyrighted GT4 data.
+
+## 1. GT4 executable and game-engine research
+
+### gustavocanepa/gt4-decomp
+- URL: https://github.com/gustavocanepa/gt4-decomp
+- License: MIT (verify the upstream LICENSE before reusing individual files).
+- Scope: matching decompilation of the GT4 PS2 executable for NTSC-U SCUS-97328 v1.01.
+- Useful findings documented upstream:
+  - Retail `CORE.GT4` uses a raw-DEFLATE payload and is not described as having an encryption layer.
+  - The executable is loaded at EE address `0x00100000`; entry point is `0x00100008`.
+  - The repository documents engine architecture, classes, script-engine integration, runtime types, and function coverage.
+  - Upstream README reports approximately 98% of functions matched in November 2026.
+- Limitations:
+  - This is a matching decompilation, not a finished Android runtime.
+  - It targets a specific GT4 disc revision; addresses and layouts must not be assumed to match every region/revision.
+  - It requires the user's own legally obtained game executable for its build/verification workflow.
+- Use in this project:
+  1. Treat its format notes and knowledge documents as the primary GT4-specific reverse-engineering reference.
+  2. Compare our CORE parser against the documented header, section layout, and entry point.
+  3. Use subsystem/class names to plan compatibility work.
+  4. Do not bulk-copy source into this Android project without a deliberate license and build-compatibility review.
+
+### OpenAdhoc
+- URL: https://github.com/Nenkai/OpenAdhoc
+- Scope: research/reimplementation of the Adhoc script VM used by Gran Turismo titles.
+- Why it matters: the GT4 decompilation project notes that much of the game's logic is in Adhoc scripts, so an eventual port needs script VM compatibility as well as executable loading.
+- Use: study the VM format and runtime behavior after the EE loader and core runtime foundations are stable. Confirm its current license and revision before reuse.
+
+## 2. PS2 CPU recompilation research
+
+### ran-j/PS2Recomp
+- URL: https://github.com/ran-j/PS2Recomp
+- License: GPL-3.0.
+- Scope: experimental static recompiler and runtime for PS2 ELF programs.
+- Useful modules described upstream:
+  - `ps2xAnalyzer`: ELF/function analysis and configuration.
+  - `ps2xRecomp`: R5900 instruction decoding and C++ code generation.
+  - `ps2xRuntime`: guest memory, function dispatch, syscalls and hardware stubs.
+  - `ps2xIOP`: R3000A IRX execution and HLE service fallbacks.
+- Limitations:
+  - Upstream describes the project as experimental and lists incomplete/stubbed hardware paths.
+  - Its documented build is C++20 and tested mainly with MSVC; some vector paths require SSE4/AVX. That is not a direct Android ARM64 build.
+  - GPL-3.0 obligations must be assessed before copying or linking code into this project.
+- Use in this project:
+  - Study the instruction decoder, function analysis, guest-memory interface and IOP separation.
+  - Build our own correctness-first R5900 interpreter/test suite first.
+  - Only adopt code after a written license review and Android/ARM64 compatibility test. Do not assume a desktop recompiler can be dropped into Android.
+
+### PS2 hardware documentation
+- URL: https://github.com/ninjadynamics/PS2Docs
+- Contents include archived Sony manuals for EE overview, EE peripherals, R5900 core and instruction set, VU0/VU1, GS and SPU2, plus practical implementation notes.
+- Use the manuals as architecture references. Verify instruction behavior and register semantics against the relevant manual sections and established emulator tests.
+
+## 3. Android / ARM64 emulator references
+
+### ARMSX2
+- URL: https://github.com/ARMSX2/ARMSX2
+- Scope: open-source PS2 emulator work for ARM64 platforms, based on PCSX2.
+- Use: study Android/ARM64 platform integration, CPU backend boundaries, and performance strategies.
+- Limitation: it is an emulator architecture, not a source-level native GT4 port. Its upstream architecture and licensing must be checked before any code reuse.
+
+## 4. Candidate implementation order for this repository
+
+1. **Validate our disc parser** against documented GT4 disc layouts and synthetic fixtures. Add recursive ISO directory traversal and safe bounds checks before depending on nested game files.
+2. **Harden CORE extraction**: validate wrapper flags, exact decompressed size, section overlap/ranges, entry-point coverage, and the two embedded hash fields. Test against more than one legally obtained disc revision when available.
+3. **Add ELF and memory-image tests** using synthetic fixtures; never execute arbitrary bytes from an ISO during parser tests.
+4. **Implement an EE R5900 interpreter** with unit tests for integer instructions, 128-bit GPR semantics, branch delay slots, exceptions and load/store behavior. Add MMI/FPU/COP0 coverage incrementally.
+5. **Add an IOP R3000A subsystem** separately, then model required SIF/RPC, CD/DVD and controller services.
+6. **Implement VU/VIF/GIF/DMA/GS and SPU2 compatibility** in dependency order, with deterministic tests and frame/audio captures.
+7. **Investigate static recompilation or ARM64 JIT** only after the interpreter provides a trusted reference implementation.
+8. **Integrate GT4 engine and Adhoc VM**, then test boot/menu/race/save behavior on actual Android hardware.
+
+## 5. Legal and engineering guardrails
+
+- The app must not bundle a GT4 ISO, game executable, GT4 assets, or PS2 BIOS.
+- The user supplies their own legally obtained disc image and any required firmware.
+- Public source-code licenses are not interchangeable. MIT, GPL-3.0 and unlicensed documentation require different handling.
+- A high decompilation percentage does not mean a game is playable: CPU semantics, OS services, I/O, graphics, sound, timing and game data integration remain necessary.
+- A successful APK build proves compilation and packaging only. Playability must be demonstrated on the target phone with a real supported game image.
+
+## 6. Current project decision
+
+For this repository, the safest immediate acceleration is to **reuse research, specifications, and test ideas first**, not import a large unrelated emulator or recompiler wholesale. The GT4 decompilation is the strongest game-specific reference; PS2Recomp is a useful CPU/recompiler design reference; PS2Docs is the hardware reference shelf; ARMSX2 is an Android/ARM64 integration reference.
