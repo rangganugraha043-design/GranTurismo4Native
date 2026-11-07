@@ -295,8 +295,11 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                         std::snprintf(sizeText, sizeof(sizeText), " — %.2f MiB", double(bytes) / (1024.0 * 1024.0));
                         line += sizeText;
                         line += (filename == "CORE.GT4") ? " [executable GT4: ditemukan]" : " [volume data GT4: ditemukan]";
-                        if (filename == "CORE.GT4" && extent <= fileSize && bytes <= fileSize - extent)
-                            inspectCore(fd, extent, bytes, report);
+                        if (filename == "CORE.GT4" && extent <= fileSize && bytes <= fileSize - extent) {
+                            std::string coreReport;
+                            inspectCore(fd, extent, bytes, coreReport);
+                            std::strncat(report, coreReport.c_str(), sizeof(report) - std::strlen(report) - 1);
+                        }
                         if (filename == "GT4.VOL")
                             std::strncat(report, "GT4.VOL: volume aset game ditemukan; isi volume belum diekstrak.\n", sizeof(report)-std::strlen(report)-1);
                     }
