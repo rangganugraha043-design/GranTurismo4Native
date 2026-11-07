@@ -54,6 +54,10 @@ This document records public research that can accelerate the Android ARM64 GT4 
 - Use: likely important for a source-level GT4 port because engine executable code alone is not the complete game logic. Study script VM semantics and the GT4-specific script coverage.
 - Limitations: it is a scripting-language reimplementation and modding/reverse-engineering project, not a complete game runtime or Android port. GPL-3.0 terms must be reviewed before code reuse.
 
+
+### Native-port milestone and validation model
+The upstream GT4 Native roadmap defines separate acceptance tracks for native game code (G6), renderer (R1), sound (A1), and platform services (P1). It proposes comparing deterministic reference sessions at multiple layers (state, calls/cycles, graphics commands/frames, and audio) rather than treating a successful compile as proof of correctness. This is a useful validation model for our Android port, even though the upstream roadmap is for PC and has no playable build.
+
 ## 2. PS2 CPU recompilation research
 
 ### ran-j/PS2Recomp
