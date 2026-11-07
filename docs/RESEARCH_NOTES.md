@@ -58,6 +58,30 @@ This document records public research that can accelerate the Android ARM64 GT4 
 ### Native-port milestone and validation model
 The upstream GT4 Native roadmap defines separate acceptance tracks for native game code (G6), renderer (R1), sound (A1), and platform services (P1). It proposes comparing deterministic reference sessions at multiple layers (state, calls/cycles, graphics commands/frames, and audio) rather than treating a successful compile as proof of correctness. This is a useful validation model for our Android port, even though the upstream roadmap is for PC and has no playable build.
 
+
+## 1A. Concrete Android reference: GT3 Revisited (user-provided APK)
+
+### Upstream source
+- URL: https://github.com/matt-pulsipher/GT3-revisited
+- License: MIT; retain upstream notices for any reused files.
+- This is a native reimplementation of the GT3 engine, not a PS2 emulator. It reads the user's ISO/CHD at runtime and does not distribute game assets.
+- Its CMake architecture separates a portable C++ engine library (`gt3r_engine`) from the Android SDL entry target (`libmain.so`). Android uses SDL3 Java glue plus NDK/CMake.
+- Android documentation describes Storage Access Framework disc selection, touch controls, physical controllers, tilt steering, dynamic resolution and Vulkan rendering.
+- Its format documentation covers the GT3 boot executable, CORE.GT3 wrapper, GT3.VOL archive, texture formats and GS-memory texture handling.
+
+### Inspection of the APK supplied for this project
+The uploaded `gt3r-android.apk` was inspected locally. It contains native libraries for `arm64-v8a` and `x86_64`. The ARM64 native binary exposes C++ symbols for application lifecycle, disc opening, VFS, screen registry, touch overlay/input manager, audio, GPU context, render scaling and game startup. This is consistent with the upstream SDL/C++ architecture; it does not mean the GT3 game runtime can be reused directly for GT4.
+
+### How we should use it
+1. Adopt the same product architecture: native C++ engine, thin Android/SDL activity, user-picked disc image, runtime VFS, touch/controller input, native audio and GPU renderer.
+2. Use GT3 Revisited as a reference for Android packaging, file-picker integration, UI flow, input configuration, render scaling, testing and CI.
+3. Reuse only small, separable MIT-licensed platform utilities after checking dependencies and notices.
+4. Do not copy GT3-specific game logic, GT3.VOL parser assumptions, GT3 physics, car/course formats or GT3 executable layouts into GT4. GT4 has its own executable and asset-container differences.
+5. Prefer GT4-specific decompilation and format research for the game engine. GT3 Revisited is a platform/architecture reference, not a ready-made GT4 engine.
+
+### Hardware caution
+The GT3 project's public Android guide recommends Snapdragon 865-class hardware or equivalent. Its platform notes report a Galaxy A15 5G baseline with reduced race performance. Neither is a compatibility guarantee for the user's POCO device. We must profile the actual target CPU/GPU and tune rendering before claiming full-speed GT4 support.
+
 ## 2. PS2 CPU recompilation research
 
 ### ran-j/PS2Recomp
