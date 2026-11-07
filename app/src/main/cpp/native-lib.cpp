@@ -11,19 +11,19 @@
 static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string& report) {
     // Retail CORE.GT4 has a 6-byte wrapper followed by a raw DEFLATE stream.
     if (fileBytes < 7 || fileBytes > 16u * 1024u * 1024u) {
-        report += "CORE.GT4: ukuran file di luar batas pemeriksaan aman.\\n";
+        report += "CORE.GT4: ukuran file di luar batas pemeriksaan aman.\n";
         return false;
     }
     std::vector<uint8_t> packed(static_cast<size_t>(fileBytes));
     if (pread(fd, packed.data(), packed.size(), static_cast<off_t>(offset)) !=
         static_cast<ssize_t>(packed.size())) {
-        report += "CORE.GT4: gagal membaca data executable.\\n";
+        report += "CORE.GT4: gagal membaca data executable.\n";
         return false;
     }
     const uint16_t flags = uint16_t(packed[0]) | (uint16_t(packed[1]) << 8);
     const uint32_t expectedSize = readLe32(packed.data() + 2);
     if (expectedSize == 0 || expectedSize > 32u * 1024u * 1024u) {
-        report += "CORE.GT4: ukuran hasil dekompresi tidak valid.\\n";
+        report += "CORE.GT4: ukuran hasil dekompresi tidak valid.\n";
         return false;
     }
 
@@ -34,7 +34,7 @@ static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string
     stream.next_out = unpacked.data();
     stream.avail_out = static_cast<uInt>(unpacked.size());
     if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
-        report += "CORE.GT4: zlib gagal diinisialisasi.\\n";
+        report += "CORE.GT4: zlib gagal diinisialisasi.\n";
         return false;
     }
     const int result = inflate(&stream, Z_FINISH);
@@ -43,14 +43,14 @@ static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string
 
     char detail[192];
     std::snprintf(detail, sizeof(detail),
-        "CORE.GT4: flags=0x%04X, target=%u byte, hasil=%llu byte.\\n",
+        "CORE.GT4: flags=0x%04X, target=%u byte, hasil=%llu byte.\n",
         flags, expectedSize, static_cast<unsigned long long>(produced));
     report += detail;
     if (result != Z_STREAM_END || produced != expectedSize) {
-        report += "CORE.GT4: dekompresi belum valid/utuh; executable tidak akan dijalankan.\\n";
+        report += "CORE.GT4: dekompresi belum valid/utuh; executable tidak akan dijalankan.\n";
         return false;
     }
-    report += "CORE.GT4: raw DEFLATE berhasil diperiksa. Ini baru validasi executable, belum menjalankan mesin PS2.\\n";
+    report += "CORE.GT4: raw DEFLATE berhasil diperiksa. Ini baru validasi executable, belum menjalankan mesin PS2.\n";
     return true;
 }
 
@@ -199,7 +199,7 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
             p += recLen;
         }
     } else {
-        std::strncat(report, "SYSTEM.CNF/BOOT2 tidak ditemukan di direktori root.\\n", sizeof(report)-std::strlen(report)-1);
+        std::strncat(report, "SYSTEM.CNF/BOOT2 tidak ditemukan di direktori root.\n", sizeof(report)-std::strlen(report)-1);
     }
 
     std::strncat(report, "Isi direktori utama (maks. 16 entri):\n", sizeof(report)-std::strlen(report)-1);
@@ -235,7 +235,7 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                         if (filename == "CORE.GT4" && extent <= fileSize && bytes <= fileSize - extent)
                             inspectCore(fd, extent, bytes, report);
                         if (filename == "GT4.VOL")
-                            std::strncat(report, "GT4.VOL: volume aset game ditemukan; isi volume belum diekstrak.\\n", sizeof(report)-std::strlen(report)-1);
+                            std::strncat(report, "GT4.VOL: volume aset game ditemukan; isi volume belum diekstrak.\n", sizeof(report)-std::strlen(report)-1);
                     }
                     line += "\n";
                     std::strncat(report, line.c_str(), sizeof(report)-std::strlen(report)-1);
