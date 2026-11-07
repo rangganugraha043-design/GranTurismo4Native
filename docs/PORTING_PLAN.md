@@ -57,3 +57,16 @@ The existing repository is a prototype shell and disc inspector, not a playable 
 
 ## Acceptance criteria
 A milestone is complete only when it has automated tests and a reproducible build. "Playable" means a user can select a supported own disc image, boot into GT4, navigate menus, start and finish a race with working graphics, sound, controls and save/load on the target Android device.
+
+
+## Implemented prototype work (2026-11-07)
+
+- ISO-9660 primary volume descriptor and root directory inspection.
+- Read `SYSTEM.CNF` and report the `BOOT2` executable name.
+- Identify a standard little-endian ELF32/MIPS bootstrap header when present.
+- Locate root-level `CORE.GT4` and `GT4.VOL` entries.
+- Inflate the retail `CORE.GT4` raw-DEFLATE payload with Android zlib.
+- Perform bounded structural checks on the decompressed CORE header, section table, section ranges, and entry-point coverage.
+- The scanner is read-only. It does not verify the embedded hashes, map EE memory, execute MIPS instructions, load IOP modules, or render the game.
+
+This is an inspection milestone only. No claim of a playable build is made. The CORE header layout is based on the documented PS2 CORE format and the GT4 executable research cited in the README.
