@@ -14,7 +14,7 @@ static uint32_t readLe32(const uint8_t* p) {
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_id_granturismo4_nativeapp_MainActivity_nativeVersion(JNIEnv* env, jobject) {
-    return env->NewStringUTF("GT4 Native Core 0.3 — ISO-9660 directory reader");
+    return env->NewStringUTF("GT4 Native Core 0.4 — disc content scanner");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -177,7 +177,15 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                 while (!filename.empty() && filename.back() == '.') filename.pop_back();
                 if (!filename.empty()) {
                     const char* kind = (rec[25] & 0x02) ? "[DIR] " : "[FILE] ";
-                    std::string line = std::string(kind) + filename + "\n";
+                    std::string line = std::string(kind) + filename;
+                    if (!(rec[25] & 0x02) && (filename == "CORE.GT4" || filename == "GT4.VOL")) {
+                        const uint64_t bytes = readLe32(rec + 10);
+                        char sizeText[96];
+                        std::snprintf(sizeText, sizeof(sizeText), " — %.2f MiB", double(bytes) / (1024.0 * 1024.0));
+                        line += sizeText;
+                        line += (filename == "CORE.GT4") ? " [executable GT4: ditemukan]" : " [volume data GT4: ditemukan]";
+                    }
+                    line += "\n";
                     std::strncat(report, line.c_str(), sizeof(report)-std::strlen(report)-1);
                     ++count;
                 }
@@ -187,6 +195,7 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
     }
     if (count == 0)
         std::strncat(report, "(tidak ada entri yang terbaca)\n", sizeof(report)-std::strlen(report)-1);
+    std::strncat(report, "Catatan: CORE.GT4 adalah executable; aset utama game berada di GT4.VOL.\n", sizeof(report)-std::strlen(report)-1);
     std::strncat(report, "Pemeriksaan read-only. Game belum dijalankan.", sizeof(report)-std::strlen(report)-1);
     return env->NewStringUTF(report);
 }
