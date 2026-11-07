@@ -31,6 +31,29 @@ This document records public research that can accelerate the Android ARM64 GT4 
 - Why it matters: the GT4 decompilation project notes that much of the game's logic is in Adhoc scripts, so an eventual port needs script VM compatibility as well as executable loading.
 - Use: study the VM format and runtime behavior after the EE loader and core runtime foundations are stable. Confirm its current license and revision before reuse.
 
+
+### gustavocanepa/gt4-native
+- URL: https://github.com/gustavocanepa/gt4-native
+- License: GPL-3.0 for the port's original code; imported upstream GT4 decompilation files retain MIT notices.
+- Scope: experimental source-level native PC port built on `gt4-decomp`, explicitly not a PS2 emulator or static recompiler.
+- Useful direction:
+  - Guest-memory compatibility tools, ELF inspection, ABI experiments, and an automated pinned-source import/triage workflow.
+  - Its documented approach adapts selected original GT4 functions to a host runtime rather than emulating all PS2 hardware.
+- Limitations:
+  - Upstream explicitly says no playable build exists.
+  - It targets PC today; its host ABI, renderer, audio and platform layers are not an Android implementation.
+- Use in this project:
+  - Study the guest-memory model, source provenance pipeline, ABI checks and test strategy.
+  - Evaluate whether a small, isolated host-compatible function can be adapted for Android after reviewing its GPL-3.0 obligations.
+  - Do not import the whole repository and describe it as a working port.
+
+### Nenkai/OpenAdhoc
+- URL: https://github.com/Nenkai/OpenAdhoc
+- License: GPL-3.0.
+- Scope: open-source reimplementation of Gran Turismo's proprietary Adhoc scripting language; its README describes scripts as carrying much of the games' logic while the executable provides the engine and script-facing libraries.
+- Use: likely important for a source-level GT4 port because engine executable code alone is not the complete game logic. Study script VM semantics and the GT4-specific script coverage.
+- Limitations: it is a scripting-language reimplementation and modding/reverse-engineering project, not a complete game runtime or Android port. GPL-3.0 terms must be reviewed before code reuse.
+
 ## 2. PS2 CPU recompilation research
 
 ### ran-j/PS2Recomp
