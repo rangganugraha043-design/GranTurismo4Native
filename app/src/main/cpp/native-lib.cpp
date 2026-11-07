@@ -78,6 +78,83 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
         return env->NewStringUTF(report);
     }
 
+    // Read SYSTEM.CNF to discover the disc's BOOT2 executable path.
+    std::string bootPath;
+    size_t scan = 0;
+    while (scan < data.size()) {
+        const uint8_t recLen = data[scan];
+        if (recLen == 0) { scan = ((scan / sectorSize) + 1) * sectorSize; continue; }
+        if (recLen < 34 || scan + recLen > data.size()) break;
+        const uint8_t* rec = data.data() + scan;
+        const uint8_t nl = rec[32];
+        if (nl > 0 && size_t(33 + nl) <= recLen) {
+            std::string nm(reinterpret_cast<const char*>(rec + 33), nl);
+            const size_t ver = nm.find(';'); if (ver != std::string::npos) nm.resize(ver);
+            if (nm == "SYSTEM.CNF" && !(rec[25] & 0x02)) {
+                const uint64_t extent = uint64_t(readLe32(rec + 2)) * sectorSize;
+                const uint64_t bytes = readLe32(rec + 10);
+                if (bytes > 0 && bytes <= 4096 && extent <= fileSize && bytes <= fileSize - extent) {
+                    std::vector<char> cnf(static_cast<size_t>(bytes) + 1, 0);
+                    if (pread(fd, cnf.data(), static_cast<size_t>(bytes), static_cast<off_t>(extent)) == static_cast<ssize_t>(bytes)) {
+                        std::string cfg(cnf.data());
+                        size_t p = cfg.find("BOOT2");
+                        if (p != std::string::npos) {
+                            p = cfg.find('=', p);
+                            if (p != std::string::npos) {
+                                ++p; while (p < cfg.size() && (cfg[p] == ' ' || cfg[p] == '\t' || cfg[p] == '"' )) ++p;
+                                size_t e = cfg.find_first_of("\r\n\";", p);
+                                if (e == std::string::npos) e = cfg.size();
+                                bootPath = cfg.substr(p, e-p);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        scan += recLen;
+    }
+
+    if (!bootPath.empty()) {
+        const size_t slash = bootPath.find_last_of("\\/");
+        std::string bootName = slash == std::string::npos ? bootPath : bootPath.substr(slash + 1);
+        std::strncat(report, "BOOT2: ", sizeof(report)-std::strlen(report)-1);
+        std::strncat(report, bootName.c_str(), sizeof(report)-std::strlen(report)-1);
+        std::strncat(report, "\n", sizeof(report)-std::strlen(report)-1);
+        size_t p = 0;
+        while (p < data.size()) {
+            const uint8_t recLen = data[p];
+            if (recLen == 0) { p = ((p / sectorSize) + 1) * sectorSize; continue; }
+            if (recLen < 34 || p + recLen > data.size()) break;
+            const uint8_t* rec = data.data() + p;
+            const uint8_t nl = rec[32];
+            if (nl > 0 && size_t(33 + nl) <= recLen) {
+                std::string nm(reinterpret_cast<const char*>(rec + 33), nl);
+                const size_t ver = nm.find(';'); if (ver != std::string::npos) nm.resize(ver);
+                if (nm == bootName && !(rec[25] & 0x02)) {
+                    const uint64_t ex = uint64_t(readLe32(rec + 2)) * sectorSize;
+                    const uint64_t sz = readLe32(rec + 10);
+                    uint8_t elf[52] {};
+                    if (sz >= sizeof(elf) && ex <= fileSize && sizeof(elf) <= fileSize - ex &&
+                        pread(fd, elf, sizeof(elf), static_cast<off_t>(ex)) == sizeof(elf)) {
+                        if (std::memcmp(elf, "\\x7f" "ELF", 4) == 0 && elf[4] == 1 && elf[5] == 1) {
+                            const uint16_t machine = uint16_t(elf[18]) | (uint16_t(elf[19]) << 8);
+                            const uint32_t entry = readLe32(elf + 24);
+                            char detail[128];
+                            std::snprintf(detail, sizeof(detail), "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\\n", machine, entry);
+                            std::strncat(report, detail, sizeof(report)-std::strlen(report)-1);
+                            if (machine == 8) std::strncat(report, "Arsitektur MIPS terdeteksi (sesuai keluarga PS2).\\n", sizeof(report)-std::strlen(report)-1);
+                        } else std::strncat(report, "File BOOT2 ditemukan, tetapi header ELF standar tidak cocok.\\n", sizeof(report)-std::strlen(report)-1);
+                    }
+                    break;
+                }
+            }
+            p += recLen;
+        }
+    } else {
+        std::strncat(report, "SYSTEM.CNF/BOOT2 tidak ditemukan di direktori root.\\n", sizeof(report)-std::strlen(report)-1);
+    }
+
     std::strncat(report, "Isi direktori utama (maks. 16 entri):\n", sizeof(report)-std::strlen(report)-1);
     size_t pos = 0;
     int count = 0;
