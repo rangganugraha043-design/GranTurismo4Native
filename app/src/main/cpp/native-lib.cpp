@@ -8,6 +8,7 @@
 #include <vector>
 #include <zlib.h>
 
+static uint16_t readLe16(const uint8_t* p);
 static uint32_t readLe32(const uint8_t* p);
 
 static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string& report) {
