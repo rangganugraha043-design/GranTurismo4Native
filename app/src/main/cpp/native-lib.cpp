@@ -52,8 +52,68 @@ static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string
         report += "CORE.GT4: dekompresi belum valid/utuh; executable tidak akan dijalankan.\n";
         return false;
     }
-    report += "CORE.GT4: raw DEFLATE berhasil diperiksa. Ini baru validasi executable, belum menjalankan mesin PS2.\n";
+    // Parse the decompressed CORE header: two sized hashes, section count,
+    // EE entry point, then (load address, byte count, data) records.
+    size_t cursor = 0;
+    if (unpacked.size() < 4) {
+        report += "CORE.GT4: header hasil dekompresi terlalu pendek.\n";
+        return false;
+    }
+    const uint16_t hash1Size = readLe16(unpacked.data() + cursor);
+    cursor += 2;
+    if (hash1Size > 128 || cursor + hash1Size + 2 > unpacked.size()) {
+        report += "CORE.GT4: ukuran hash pertama tidak valid.\n";
+        return false;
+    }
+    cursor += hash1Size;
+    const uint16_t hash2Size = readLe16(unpacked.data() + cursor);
+    cursor += 2;
+    if (hash2Size > 128 || cursor + hash2Size + 8 > unpacked.size()) {
+        report += "CORE.GT4: ukuran hash kedua tidak valid.\n";
+        return false;
+    }
+    cursor += hash2Size;
+    const uint32_t sectionCount = readLe32(unpacked.data() + cursor);
+    cursor += 4;
+    const uint32_t entry = readLe32(unpacked.data() + cursor);
+    cursor += 4;
+    if (sectionCount == 0 || sectionCount > 32) {
+        report += "CORE.GT4: jumlah section tidak masuk akal.\n";
+        return false;
+    }
+    bool entryCovered = false;
+    for (uint32_t i = 0; i < sectionCount; ++i) {
+        if (cursor + 8 > unpacked.size()) {
+            report += "CORE.GT4: tabel section terpotong.\n";
+            return false;
+        }
+        const uint32_t loadAddress = readLe32(unpacked.data() + cursor);
+        const uint32_t sectionBytes = readLe32(unpacked.data() + cursor + 4);
+        cursor += 8;
+        if (sectionBytes == 0 || sectionBytes > unpacked.size() - cursor ||
+            uint64_t(loadAddress) + sectionBytes > 0x100000000ULL) {
+            report += "CORE.GT4: rentang data section tidak valid.\n";
+            return false;
+        }
+        if (entry >= loadAddress && uint64_t(entry) < uint64_t(loadAddress) + sectionBytes)
+            entryCovered = true;
+        cursor += sectionBytes;
+    }
+    char coreDetail[160];
+    std::snprintf(coreDetail, sizeof(coreDetail),
+        "Header CORE: %u section, entry 0x%08X, hash %u/%u byte.\n",
+        sectionCount, entry, hash1Size, hash2Size);
+    report += coreDetail;
+    if (!entryCovered) {
+        report += "CORE.GT4: entry point tidak berada di dalam section mana pun.\n";
+        return false;
+    }
+    report += "CORE.GT4: kompresi dan struktur section valid. Hash belum diverifikasi; belum menjalankan mesin PS2.\n";
     return true;
+}
+
+static uint16_t readLe16(const uint8_t* p) {
+    return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
 }
 
 static uint32_t readLe32(const uint8_t* p) {
