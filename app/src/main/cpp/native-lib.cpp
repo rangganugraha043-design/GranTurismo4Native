@@ -137,11 +137,11 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                     uint8_t elf[52] {};
                     if (sz >= sizeof(elf) && ex <= fileSize && sizeof(elf) <= fileSize - ex &&
                         pread(fd, elf, sizeof(elf), static_cast<off_t>(ex)) == sizeof(elf)) {
-                        if (std::memcmp(elf, "\\x7f" "ELF", 4) == 0 && elf[4] == 1 && elf[5] == 1) {
+                        if (std::memcmp(elf, "\x7f" "ELF", 4) == 0 && elf[4] == 1 && elf[5] == 1) {
                             const uint16_t machine = uint16_t(elf[18]) | (uint16_t(elf[19]) << 8);
                             const uint32_t entry = readLe32(elf + 24);
                             char detail[128];
-                            std::snprintf(detail, sizeof(detail), "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\\n", machine, entry);
+                            std::snprintf(detail, sizeof(detail), "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\n", machine, entry);
                             std::strncat(report, detail, sizeof(report)-std::strlen(report)-1);
                             if (machine == 8) std::strncat(report, "Arsitektur MIPS terdeteksi (sesuai keluarga PS2).\\n", sizeof(report)-std::strlen(report)-1);
                         } else std::strncat(report, "File BOOT2 ditemukan, tetapi header ELF standar tidak cocok.\\n", sizeof(report)-std::strlen(report)-1);
