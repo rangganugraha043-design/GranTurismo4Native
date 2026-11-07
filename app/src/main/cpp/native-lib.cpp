@@ -8,6 +8,8 @@
 #include <vector>
 #include <zlib.h>
 
+static uint32_t readLe32(const uint8_t* p);
+
 static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string& report) {
     // Retail CORE.GT4 has a 6-byte wrapper followed by a raw DEFLATE stream.
     if (fileBytes < 7 || fileBytes > 16u * 1024u * 1024u) {
