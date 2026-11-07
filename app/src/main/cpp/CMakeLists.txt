@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(gt4native)
+add_library(gt4native SHARED native-lib.cpp)
+find_library(log-lib log)
+target_link_libraries(gt4native ${log-lib})
