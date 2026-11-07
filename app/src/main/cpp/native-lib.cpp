@@ -122,6 +122,96 @@ static uint32_t readLe32(const uint8_t* p) {
            (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
 
+
+struct IsoEntry {
+    std::string name;
+    std::string path;
+    uint64_t offset;
+    uint64_t size;
+    bool directory;
+};
+
+static bool scanIsoDirectory(int fd, uint64_t fileSize, uint64_t lba,
+                             uint64_t byteCount, const std::string& parent,
+                             unsigned depth, std::vector<IsoEntry>& entries,
+                             std::vector<uint64_t>& visited, uint64_t& bytesRead) {
+    constexpr uint64_t sector = 2048;
+    constexpr uint64_t maxDirectory = 4u * 1024u * 1024u;
+    constexpr uint64_t maxTotal = 32u * 1024u * 1024u;
+    constexpr size_t maxEntries = 4096;
+    if (depth > 8 || byteCount == 0 || byteCount > maxDirectory ||
+        byteCount > maxTotal - bytesRead || entries.size() >= maxEntries ||
+        lba > UINT64_MAX / sector) return false;
+    const uint64_t offset = lba * sector;
+    if (offset > fileSize || byteCount > fileSize - offset ||
+        offset > uint64_t(INT64_MAX)) return false;
+    for (uint64_t seen : visited) if (seen == lba) return true;
+    visited.push_back(lba);
+    std::vector<uint8_t> data(static_cast<size_t>(byteCount));
+    if (pread(fd, data.data(), data.size(), static_cast<off_t>(offset)) !=
+        static_cast<ssize_t>(data.size())) return false;
+    bytesRead += byteCount;
+    size_t pos = 0;
+    std::vector<IsoEntry> children;
+    while (pos < data.size() && entries.size() + children.size() < maxEntries) {
+        const uint8_t len = data[pos];
+        if (len == 0) {
+            pos = ((pos / sector) + 1) * sector;
+            continue;
+        }
+        if (len < 34 || pos + len > data.size()) break;
+        const uint8_t* rec = data.data() + pos;
+        const uint8_t nameLen = rec[32];
+        if (nameLen > 0 && size_t(33 + nameLen) <= len) {
+            const bool dot = nameLen == 1 && (rec[33] == 0 || rec[33] == 1);
+            if (!dot) {
+                std::string name(reinterpret_cast<const char*>(rec + 33), nameLen);
+                const size_t version = name.find(';');
+                if (version != std::string::npos) name.resize(version);
+                while (!name.empty() && name.back() == '.') name.pop_back();
+                if (!name.empty()) {
+                    const uint64_t extent = readLe32(rec + 2);
+                    const uint64_t size = readLe32(rec + 10);
+                    const bool isDir = (rec[25] & 0x02) != 0;
+                    if (extent <= UINT64_MAX / sector) {
+                        IsoEntry item{name, parent.empty() ? name : parent + "/" + name,
+                                      extent * sector, size, isDir};
+                        children.push_back(item);
+                    }
+                }
+            }
+        }
+        pos += len;
+    }
+    for (const auto& item : children) entries.push_back(item);
+    if (depth < 8) {
+        for (const auto& item : children) {
+            if (item.directory && entries.size() < maxEntries) {
+                if (!scanIsoDirectory(fd, fileSize, item.offset / sector, item.size,
+                                      item.path, depth + 1, entries, visited, bytesRead))
+                    continue;
+            }
+        }
+    }
+    return true;
+}
+
+static void appendReport(char* report, size_t capacity, const std::string& value) {
+    const size_t used = std::strlen(report);
+    if (used >= capacity - 1) return;
+    std::strncat(report, value.c_str(), capacity - used - 1);
+}
+static bool sameIsoName(const std::string& a, const char* b) {
+    if (a.size() != std::strlen(b)) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        char x = a[i], y = b[i];
+        if (x >= 'a' && x <= 'z') x = char(x - 'a' + 'A');
+        if (y >= 'a' && y <= 'z') y = char(y - 'a' + 'A');
+        if (x != y) return false;
+    }
+    return true;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_id_granturismo4_nativeapp_MainActivity_nativeVersion(JNIEnv* env, jobject) {
     return env->NewStringUTF("GT4 Native Core 0.4 — disc content scanner");
@@ -169,151 +259,115 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
 
     const uint8_t* root = pvd + 156;
     if (root[0] < 34) {
-        std::strncat(report, "Record direktori root tidak valid.", sizeof(report)-std::strlen(report)-1);
+        appendReport(report, sizeof(report), "Record direktori root tidak valid.");
         return env->NewStringUTF(report);
     }
-
     const uint64_t rootLba = readLe32(root + 2);
     const uint64_t rootLength = readLe32(root + 10);
-    const uint64_t rootOffset = rootLba * sectorSize;
-    if (rootLength == 0 || rootLength > 4u * 1024u * 1024u ||
-        rootOffset > fileSize || rootLength > fileSize - rootOffset) {
-        std::strncat(report, "Rentang direktori root tidak valid.", sizeof(report)-std::strlen(report)-1);
+    std::vector<IsoEntry> entries;
+    std::vector<uint64_t> visited;
+    uint64_t directoryBytes = 0;
+    if (!scanIsoDirectory(fd, fileSize, rootLba, rootLength, "", 0,
+                          entries, visited, directoryBytes)) {
+        appendReport(report, sizeof(report), "Gagal membaca struktur direktori ISO dengan batas keamanan.");
         return env->NewStringUTF(report);
     }
 
-    std::vector<uint8_t> data(static_cast<size_t>(rootLength));
-    if (pread(fd, data.data(), data.size(), static_cast<off_t>(rootOffset)) != static_cast<ssize_t>(data.size())) {
-        std::strncat(report, "Gagal membaca direktori root.", sizeof(report)-std::strlen(report)-1);
-        return env->NewStringUTF(report);
+    appendReport(report, sizeof(report), "Pemindaian direktori rekursif ISO-9660 (maks. 8 tingkat):\n");
+    char countText[128];
+    std::snprintf(countText, sizeof(countText), "%zu entri ditemukan; %zu direktori dikunjungi.\n",
+                  entries.size(), visited.size());
+    appendReport(report, sizeof(report), countText);
+
+    const IsoEntry* systemCnf = nullptr;
+    const IsoEntry* bootElf = nullptr;
+    const IsoEntry* coreFile = nullptr;
+    const IsoEntry* volumeFile = nullptr;
+    for (const auto& item : entries) {
+        if (item.directory) continue;
+        if (sameIsoName(item.name, "SYSTEM.CNF")) systemCnf = &item;
+        if (sameIsoName(item.name, "CORE.GT4")) coreFile = &item;
+        if (sameIsoName(item.name, "GT4.VOL")) volumeFile = &item;
     }
 
-    // Read SYSTEM.CNF to discover the disc's BOOT2 executable path.
     std::string bootPath;
-    size_t scan = 0;
-    while (scan < data.size()) {
-        const uint8_t recLen = data[scan];
-        if (recLen == 0) { scan = ((scan / sectorSize) + 1) * sectorSize; continue; }
-        if (recLen < 34 || scan + recLen > data.size()) break;
-        const uint8_t* rec = data.data() + scan;
-        const uint8_t nl = rec[32];
-        if (nl > 0 && size_t(33 + nl) <= recLen) {
-            std::string nm(reinterpret_cast<const char*>(rec + 33), nl);
-            const size_t ver = nm.find(';'); if (ver != std::string::npos) nm.resize(ver);
-            if (nm == "SYSTEM.CNF" && !(rec[25] & 0x02)) {
-                const uint64_t extent = uint64_t(readLe32(rec + 2)) * sectorSize;
-                const uint64_t bytes = readLe32(rec + 10);
-                if (bytes > 0 && bytes <= 4096 && extent <= fileSize && bytes <= fileSize - extent) {
-                    std::vector<char> cnf(static_cast<size_t>(bytes) + 1, 0);
-                    if (pread(fd, cnf.data(), static_cast<size_t>(bytes), static_cast<off_t>(extent)) == static_cast<ssize_t>(bytes)) {
-                        std::string cfg(cnf.data());
-                        size_t p = cfg.find("BOOT2");
-                        if (p != std::string::npos) {
-                            p = cfg.find('=', p);
-                            if (p != std::string::npos) {
-                                ++p; while (p < cfg.size() && (cfg[p] == ' ' || cfg[p] == '\t' || cfg[p] == '"' )) ++p;
-                                size_t e = cfg.find_first_of("\r\n\";", p);
-                                if (e == std::string::npos) e = cfg.size();
-                                bootPath = cfg.substr(p, e-p);
-                            }
-                        }
-                    }
+    if (systemCnf && systemCnf->size > 0 && systemCnf->size <= 4096 &&
+        systemCnf->offset <= fileSize && systemCnf->size <= fileSize - systemCnf->offset) {
+        std::vector<char> cfg(static_cast<size_t>(systemCnf->size) + 1, 0);
+        if (pread(fd, cfg.data(), static_cast<size_t>(systemCnf->size),
+                  static_cast<off_t>(systemCnf->offset)) == static_cast<ssize_t>(systemCnf->size)) {
+            std::string text(cfg.data());
+            size_t p = text.find("BOOT2");
+            if (p != std::string::npos) {
+                p = text.find('=', p);
+                if (p != std::string::npos) {
+                    ++p;
+                    while (p < text.size() && (text[p] == ' ' || text[p] == '\t' || text[p] == '"')) ++p;
+                    size_t e = text.find_first_of("\r\n\";", p);
+                    if (e == std::string::npos) e = text.size();
+                    bootPath = text.substr(p, e - p);
                 }
-                break;
             }
         }
-        scan += recLen;
     }
+    if (!systemCnf) appendReport(report, sizeof(report), "SYSTEM.CNF tidak ditemukan pada pohon direktori.\n");
+    else appendReport(report, sizeof(report), ("SYSTEM.CNF: " + systemCnf->path + "\n").c_str());
 
     if (!bootPath.empty()) {
         const size_t slash = bootPath.find_last_of("\\/");
-        std::string bootName = slash == std::string::npos ? bootPath : bootPath.substr(slash + 1);
-        std::strncat(report, "BOOT2: ", sizeof(report)-std::strlen(report)-1);
-        std::strncat(report, bootName.c_str(), sizeof(report)-std::strlen(report)-1);
-        std::strncat(report, "\n", sizeof(report)-std::strlen(report)-1);
-        size_t p = 0;
-        while (p < data.size()) {
-            const uint8_t recLen = data[p];
-            if (recLen == 0) { p = ((p / sectorSize) + 1) * sectorSize; continue; }
-            if (recLen < 34 || p + recLen > data.size()) break;
-            const uint8_t* rec = data.data() + p;
-            const uint8_t nl = rec[32];
-            if (nl > 0 && size_t(33 + nl) <= recLen) {
-                std::string nm(reinterpret_cast<const char*>(rec + 33), nl);
-                const size_t ver = nm.find(';'); if (ver != std::string::npos) nm.resize(ver);
-                if (nm == bootName && !(rec[25] & 0x02)) {
-                    const uint64_t ex = uint64_t(readLe32(rec + 2)) * sectorSize;
-                    const uint64_t sz = readLe32(rec + 10);
-                    uint8_t elf[52] {};
-                    if (sz >= sizeof(elf) && ex <= fileSize && sizeof(elf) <= fileSize - ex &&
-                        pread(fd, elf, sizeof(elf), static_cast<off_t>(ex)) == sizeof(elf)) {
-                        if (std::memcmp(elf, "\x7f" "ELF", 4) == 0 && elf[4] == 1 && elf[5] == 1) {
-                            const uint16_t machine = uint16_t(elf[18]) | (uint16_t(elf[19]) << 8);
-                            const uint32_t entry = readLe32(elf + 24);
-                            char detail[128];
-                            std::snprintf(detail, sizeof(detail), "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\n", machine, entry);
-                            std::strncat(report, detail, sizeof(report)-std::strlen(report)-1);
-                            if (machine == 8) std::strncat(report, "Arsitektur MIPS terdeteksi (sesuai keluarga PS2).\n", sizeof(report)-std::strlen(report)-1);
-                        } else std::strncat(report, "File BOOT2 ditemukan, tetapi header ELF standar tidak cocok.\n", sizeof(report)-std::strlen(report)-1);
-                    }
-                    break;
-                }
+        const std::string bootName = slash == std::string::npos ? bootPath : bootPath.substr(slash + 1);
+        appendReport(report, sizeof(report), ("BOOT2: " + bootPath + "\n").c_str());
+        for (const auto& item : entries) {
+            if (!item.directory && sameIsoName(item.name, bootName.c_str())) {
+                bootElf = &item;
+                break;
             }
-            p += recLen;
         }
-    } else {
-        std::strncat(report, "SYSTEM.CNF/BOOT2 tidak ditemukan di direktori root.\n", sizeof(report)-std::strlen(report)-1);
+        if (bootElf && bootElf->size >= 52 && bootElf->offset <= fileSize &&
+            52 <= fileSize - bootElf->offset) {
+            uint8_t elf[52]{};
+            if (pread(fd, elf, sizeof(elf), static_cast<off_t>(bootElf->offset)) == sizeof(elf)) {
+                if (std::memcmp(elf, "\x7f" "ELF", 4) == 0 && elf[4] == 1 && elf[5] == 1) {
+                    const uint16_t machine = uint16_t(elf[18]) | (uint16_t(elf[19]) << 8);
+                    char detail[160];
+                    std::snprintf(detail, sizeof(detail),
+                        "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\n",
+                        machine, readLe32(elf + 24));
+                    appendReport(report, sizeof(report), detail);
+                    if (machine == 8) appendReport(report, sizeof(report), "Arsitektur MIPS terdeteksi.\n");
+                } else appendReport(report, sizeof(report), "Header BOOT2 bukan ELF32 little-endian standar.\n");
+            }
+        } else appendReport(report, sizeof(report), "File BOOT2 tidak ditemukan/ukurannya tidak valid.\n");
     }
 
-    std::strncat(report, "Isi direktori utama (maks. 16 entri):\n", sizeof(report)-std::strlen(report)-1);
-    size_t pos = 0;
-    int count = 0;
-    while (pos < data.size() && count < 16) {
-        const uint8_t len = data[pos];
-        if (len == 0) {
-            pos = ((pos / sectorSize) + 1) * sectorSize;
-            continue;
-        }
-        if (len < 34 || pos + len > data.size()) break;
-        const uint8_t* rec = data.data() + pos;
-        const uint8_t nameLen = rec[32];
-        if (nameLen > 0 && size_t(33 + nameLen) <= len) {
-            const uint8_t* name = rec + 33;
-            const bool dotEntry = nameLen == 1 && (name[0] == 0 || name[0] == 1);
-            if (!dotEntry) {
-                std::string filename(reinterpret_cast<const char*>(name), nameLen);
-                const size_t version = filename.find(';');
-                if (version != std::string::npos) filename.resize(version);
-                while (!filename.empty() && filename.back() == '.') filename.pop_back();
-                if (!filename.empty()) {
-                    const char* kind = (rec[25] & 0x02) ? "[DIR] " : "[FILE] ";
-                    std::string line = std::string(kind) + filename;
-                    if (!(rec[25] & 0x02) && (filename == "CORE.GT4" || filename == "GT4.VOL")) {
-                        const uint64_t bytes = readLe32(rec + 10);
-                        const uint64_t extent = uint64_t(readLe32(rec + 2)) * sectorSize;
-                        char sizeText[96];
-                        std::snprintf(sizeText, sizeof(sizeText), " — %.2f MiB", double(bytes) / (1024.0 * 1024.0));
-                        line += sizeText;
-                        line += (filename == "CORE.GT4") ? " [executable GT4: ditemukan]" : " [volume data GT4: ditemukan]";
-                        if (filename == "CORE.GT4" && extent <= fileSize && bytes <= fileSize - extent) {
-                            std::string coreReport;
-                            inspectCore(fd, extent, bytes, coreReport);
-                            std::strncat(report, coreReport.c_str(), sizeof(report) - std::strlen(report) - 1);
-                        }
-                        if (filename == "GT4.VOL")
-                            std::strncat(report, "GT4.VOL: volume aset game ditemukan; isi volume belum diekstrak.\n", sizeof(report)-std::strlen(report)-1);
-                    }
-                    line += "\n";
-                    std::strncat(report, line.c_str(), sizeof(report)-std::strlen(report)-1);
-                    ++count;
-                }
-            }
-        }
-        pos += len;
+    if (coreFile) {
+        char detail[512];
+        std::snprintf(detail, sizeof(detail), "CORE.GT4: %s — %.2f MiB [ditemukan]\n",
+                      coreFile->path.c_str(), double(coreFile->size) / (1024.0 * 1024.0));
+        appendReport(report, sizeof(report), detail);
+        if (coreFile->offset <= fileSize && coreFile->size <= fileSize - coreFile->offset) {
+            std::string coreReport;
+            inspectCore(fd, coreFile->offset, coreFile->size, coreReport);
+            appendReport(report, sizeof(report), coreReport);
+        } else appendReport(report, sizeof(report), "CORE.GT4: rentang file di luar image.\n");
+    } else appendReport(report, sizeof(report), "CORE.GT4 tidak ditemukan dalam pohon ISO-9660.\n");
+
+    if (volumeFile) {
+        char detail[512];
+        std::snprintf(detail, sizeof(detail), "GT4.VOL: %s — %.2f MiB [ditemukan]\n",
+                      volumeFile->path.c_str(), double(volumeFile->size) / (1024.0 * 1024.0));
+        appendReport(report, sizeof(report), detail);
+    } else appendReport(report, sizeof(report), "GT4.VOL tidak ditemukan dalam pohon ISO-9660.\n");
+
+    appendReport(report, sizeof(report), "Contoh entri:\n");
+    size_t shown = 0;
+    for (const auto& item : entries) {
+        if (shown >= 12) break;
+        appendReport(report, sizeof(report), std::string(item.directory ? "[DIR] " : "[FILE] ") +
+                     item.path + "\n");
+        ++shown;
     }
-    if (count == 0)
-        std::strncat(report, "(tidak ada entri yang terbaca)\n", sizeof(report)-std::strlen(report)-1);
-    std::strncat(report, "Catatan: CORE.GT4 adalah executable; aset utama game berada di GT4.VOL.\n", sizeof(report)-std::strlen(report)-1);
-    std::strncat(report, "Pemeriksaan read-only. Game belum dijalankan.", sizeof(report)-std::strlen(report)-1);
+    appendReport(report, sizeof(report),
+        "Catatan: pemindaian ini hanya membaca metadata ISO-9660; UDF-only, multi-extent, dan GT4.VOL parsing belum didukung. Game belum dijalankan.");
     return env->NewStringUTF(report);
 }
