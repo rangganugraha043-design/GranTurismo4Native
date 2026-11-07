@@ -1,74 +1,97 @@
-# Android ARM64 porting plan
+# GT4 Native Android porting plan
 
-## Goal
-Build a native Android application for a legally dumped copy of Gran Turismo 4. The app must not contain Sony game data, BIOS images, or copyrighted assets. The user selects their own disc image.
+## Product goal
 
-## Important distinction
-"Native Android app" does not mean that an unmodified PS2 ISO can execute directly on an ARM phone. GT4 targets the PlayStation 2 Emotion Engine (MIPS R5900 plus VU0/VU1), IOP (MIPS R3000A), DMA/VIF/GIF, Graphics Synthesizer, and SPU2 audio hardware. Those interfaces must be translated or reproduced.
+Build an Android ARM64 native reimplementation of Gran Turismo 4, with a GT3 Revisited-style app experience:
+- the user selects their own legally obtained GT4 disc image;
+- the Android app uses a native C++ game engine and Android platform services;
+- touch controls and physical controllers are supported;
+- graphics and audio are rendered/mixed natively on Android;
+- no game ISO, BIOS, or proprietary game assets are bundled in the APK.
 
-## Research starting points
-- `gustavocanepa/gt4-decomp`: matching decompilation work for the GT4 NTSC-U executable. Its README identifies `CORE.GT4` as raw DEFLATE, loaded at `0x00100000`, with entry `0x00100008`. This is research input, not a ready-to-run Android engine.
-- `ran-j/PS2Recomp`: experimental PS2 static recompiler/runtime with R5900 translation, guest memory/function dispatch, and separate IOP R3000A work. It is GPL-3.0 and its documented desktop build is not a drop-in Android ARM64 component; study its architecture before considering code reuse.
-- `ninjadynamics/PS2Docs`: archived Sony manuals covering EE/R5900, EE peripherals, VU, GS and SPU2. Use these as hardware specifications.
-- `ARMSX2`: an ARM64-oriented PS2 emulator project useful for Android platform/performance research, but it is an emulator rather than a source-level GT4 port.
-- Detailed links, license cautions, and a staged reuse strategy are maintained in [RESEARCH_NOTES.md](RESEARCH_NOTES.md).
+A native port is not the same as running the original PS2 executable unchanged. The goal is to reconstruct/adapt GT4's game code and systems for a modern host, not to ship a PS2 emulator disguised as a GT4 app.
 
-## Engineering phases
+## Strategy decision: source-level native port first
 
-### Phase 0 — disc inspection (current prototype)
+The most relevant architecture reference is GT3 Revisited (GT3R). GT3R is a native reimplementation of the GT3 engine: it reads the user's disc data and implements game behavior on modern platforms rather than executing the PS2 game executable in a PS2 emulator. Its Android platform uses SDL3, the Android NDK/CMake, Storage Access Framework, native input/audio/rendering, and an ARM64 application.
+
+GT4 is not GT3. GT3 engine code, file formats, asset assumptions, and game-specific behavior must not be copied as if they were interchangeable. GT3R is a platform/architecture reference only.
+
+For GT4 game logic, the most relevant research base is the matching GT4 decompilation project. The separate gt4-native experiment demonstrates a source-level native-port direction and useful guest-memory/ABI compatibility techniques, but it is early-stage and has no playable build. Its current repository is GPL-3.0; this project will not copy or link its GPL code unless the project deliberately adopts a compatible licensing strategy. Publicly documented concepts and independently implemented compatible interfaces may be studied.
+
+PS2Recomp and PS2 hardware documentation remain useful references for understanding machine behavior and differential testing. A general PS2 CPU/emulator implementation is not the primary product architecture.
+
+## Technical layers
+
+1. **Disc and content layer**
+   - Keep the current scanner read-only.
+   - Add robust ISO-9660/UDF traversal, nested directories, multi-extent files, and GT4.VOL indexing.
+   - Resolve supported GT4 disc revisions and locate required game data.
+   - Validate file ranges and hashes before parsing; never execute untrusted data.
+   - Use Android SAF URIs/file descriptors so the user can select their own image without broad storage permissions.
+
+2. **GT4 source/runtime compatibility**
+   - Pin the matching GT4 decompilation revision and preserve upstream provenance and notices.
+   - Build an inventory of source files, symbols, global data, constructors, and unresolved platform dependencies.
+   - Define explicit host-side representations for guest addresses, pointers, object layouts, arrays, strings, and callbacks.
+   - Port small, independently testable GT4 routines first; compare outputs against known reference behavior.
+   - Avoid bulk-importing thousands of source files without a reviewed ABI and licensing path.
+
+3. **Native game systems**
+   - Reconstruct game-specific startup, resource management, scene state, vehicle data, race flow, and UI.
+   - Replace PS2 OS services with Android/native equivalents where feasible.
+   - Recreate the graphics command boundary and implement a Vulkan renderer; validate captured/reference output incrementally.
+   - Recreate audio mixing/streaming and controller, memory-card/save, timing, and threading services.
+   - Use PS2 manuals and emulator/recompiler projects as behavioral references, not as the shipped runtime.
+
+4. **Android application shell**
+   - Move from the current temporary Kotlin inspector screen toward an SDL3/C++ application lifecycle similar in structure to GT3R.
+   - Keep the Android Java/Kotlin layer small: activity lifecycle, SAF picker, URI/file descriptor handoff, permissions, and Android-specific integration.
+   - Native layer owns the game loop, rendering, audio, input mapping, and in-game menus.
+   - Support ARM64 first; add other ABIs only when build and performance evidence justify them.
+   - Provide touch controls and Bluetooth/USB controller support.
+
+5. **Performance and release**
+   - Profile on the actual target phone; RAM capacity alone cannot establish compatibility.
+   - Tune resolution, Vulkan pipeline, memory budgets, frame pacing, and thermal behavior.
+   - Publish APKs with accurate milestone labels. An APK that opens or scans an ISO is not a playable game.
+   - Do not claim the target POCO phone is compatible until the user tests a build on that device.
+
+## Milestones and acceptance criteria
+
+| Milestone | Deliverable | Acceptance evidence |
+|---|---|---|
+| A — disc inspection | Safe GT4 image identification and content index | Synthetic filesystem tests plus user-image scan report |
+| B — Android native shell | SDL3-based Android lifecycle, SAF handoff, native render loop | Reproducible ARM64 APK and CI build |
+| C — GT4 runtime foundation | Guest memory/ABI layer and selected native GT4 routines | Automated unit tests and reference comparisons |
+| D — asset pipeline | GT4.VOL reader and typed asset decoders | Validated indexes and fixture tests; no bundled game assets |
+| E — first native scene | One GT4 scene rendered by the native engine | Repeatable screenshot/frame comparison |
+| F — playable slice | Menu, vehicle selection, one track and race loop | Controls, graphics, sound, and stable frame pacing |
+| G — broader game | Additional modes, tracks, saves, and polish | Per-feature regression results on Android hardware |
+
+No calendar date is promised for a playable build. The full native port is a substantial reverse-engineering and engine-reconstruction project.
+
+## Current repository status
+
+The existing Android project is an early Kotlin/JNI prototype. It can select a user-provided image and inspect a limited ISO-9660 root directory. It recognizes SYSTEM.CNF, a possible BOOT2 ELF, and root-level CORE.GT4 / GT4.VOL; it can perform bounded raw-DEFLATE and CORE section-table checks.
+
+This is not yet the GT3R-style native app shell and does not run GT4. The scanner currently lacks recursive directory traversal, full UDF support, multi-extent support, GT4.VOL parsing, the native game loop, renderer, audio engine, and GT4 runtime.
+
+## Current prototype work (2026-11-07)
+
 - Android Storage Access Framework file selection.
-- Read-only ISO-9660 descriptor and root directory inspection.
-- Read `SYSTEM.CNF`, identify `BOOT2`, and inspect the executable ELF header.
-- Add tests using synthetic ISO fixtures. Do not write to the selected disc image.
-
-### Phase 1 — game executable extraction
-- Support ISO-9660 directory traversal and multi-extent files safely.
-- Resolve the boot executable from `SYSTEM.CNF`.
-- Detect the GT4 executable variant and verify its expected signature.
-- Implement bounded raw-DEFLATE extraction for `CORE.GT4` using Android's system zlib.
-- Validate output size, ELF headers, segment ranges, entry point, and hashes. Never execute arbitrary bytes from an untrusted image.
-
-### Phase 2 — CPU and runtime foundation
-- Define EE R5900 architectural state, 128-bit GPR behavior, exceptions, branch delay behavior, COP0/COP1 and relevant multimedia instructions.
-- Implement an instruction decoder and a correctness-first interpreter with unit tests.
-- Add an ARM64 dynamic recompiler only after interpreter correctness is established.
-- Treat IOP R3000A and its IRX modules as a separate execution environment.
-
-### Phase 3 — PS2 subsystem compatibility
-- EE memory map, scratchpad, timers, interrupts and DMA.
-- VIF0/VIF1, GIF packet handling, VU0/VU1 execution and synchronization.
-- GS local memory, pixel formats, blending, depth tests, texture sampling and display timing.
-- IOP disc, pad, memory-card and RPC services.
-- SPU2 audio, streaming and synchronization.
-- IPU/MPEG and other media paths used by the game.
-
-### Phase 4 — GT4 game integration
-- Load the game executable and its data files from the user's image.
-- Recreate required OS/runtime services and game-specific interfaces.
-- Validate boot, menus, garage, tracks, replays, licenses and saves separately.
-- Add controller mapping, audio settings, frame pacing and crash-safe save handling.
-
-### Phase 5 — Android performance and release
-- Profile on the actual target phone; do not infer performance from RAM alone.
-- Tune ARM64 code generation, Vulkan rendering, memory use and thermal behavior.
-- Test long sessions, suspend/resume, touch/gamepad input and multiple disc revisions.
-- Publish debug APKs only with an explicit status label until gameplay tests pass.
-
-## Current limitations
-The existing repository is a prototype shell and disc inspector, not a playable port. The current ISO scanner only reads the ISO-9660 primary volume descriptor and root directory; it is not yet a complete UDF/ISO filesystem implementation. No EE/IOP CPU, VU, GS, SPU2 or GT4 game runtime exists yet.
-
-## Acceptance criteria
-A milestone is complete only when it has automated tests and a reproducible build. "Playable" means a user can select a supported own disc image, boot into GT4, navigate menus, start and finish a race with working graphics, sound, controls and save/load on the target Android device.
-
-
-## Implemented prototype work (2026-11-07)
-
 - ISO-9660 primary volume descriptor and root directory inspection.
-- Read `SYSTEM.CNF` and report the `BOOT2` executable name.
+- Read SYSTEM.CNF and report the BOOT2 executable name.
 - Identify a standard little-endian ELF32/MIPS bootstrap header when present.
-- Locate root-level `CORE.GT4` and `GT4.VOL` entries.
-- Inflate the retail `CORE.GT4` raw-DEFLATE payload with Android zlib.
+- Locate root-level CORE.GT4 and GT4.VOL entries.
+- Inflate the retail CORE.GT4 raw-DEFLATE payload with Android zlib.
 - Perform bounded structural checks on the decompressed CORE header, section table, section ranges, and entry-point coverage.
-- The scanner is read-only. It does not verify the embedded hashes, map EE memory, execute MIPS instructions, load IOP modules, or render the game.
+- The scanner is read-only. It does not verify embedded hashes, execute game logic, render graphics, or produce sound.
 
-This is an inspection milestone only. No claim of a playable build is made. The CORE header layout is based on the documented PS2 CORE format and the GT4 executable research cited in the README.
+## Legal and provenance rules
+
+- The APK must not include a copyrighted GT4 ISO, game assets, BIOS, or proprietary SDK files.
+- User-supplied game data is read at runtime.
+- Keep upstream MIT notices for GT4 decompilation material where applicable.
+- Do not copy GPL-3.0 implementation code from experimental projects into this repository without an explicit licensing decision.
+- Keep a source/provenance manifest for imported or adapted code.
