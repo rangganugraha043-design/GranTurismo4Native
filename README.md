@@ -21,6 +21,6 @@ Run `gradle assembleDebug` with JDK 17, Android SDK 35, NDK 27.2.12479018 and CM
 APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Development plan
-See [docs/PORTING_PLAN.md](docs/PORTING_PLAN.md) for the staged plan, technical dependencies and the definition of "playable".
+See [docs/PORTING_PLAN.md](docs/PORTING_PLAN.md) for the staged plan and [docs/RESEARCH_NOTES.md](docs/RESEARCH_NOTES.md) for reviewed external GT4/PS2 research, upstream links, license notes and reuse decisions.
 
 The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
