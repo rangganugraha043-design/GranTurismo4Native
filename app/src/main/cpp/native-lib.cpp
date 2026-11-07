@@ -6,6 +6,53 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <zlib.h>
+
+static bool inspectCore(int fd, uint64_t offset, uint64_t fileBytes, std::string& report) {
+    // Retail CORE.GT4 has a 6-byte wrapper followed by a raw DEFLATE stream.
+    if (fileBytes < 7 || fileBytes > 16u * 1024u * 1024u) {
+        report += "CORE.GT4: ukuran file di luar batas pemeriksaan aman.\\n";
+        return false;
+    }
+    std::vector<uint8_t> packed(static_cast<size_t>(fileBytes));
+    if (pread(fd, packed.data(), packed.size(), static_cast<off_t>(offset)) !=
+        static_cast<ssize_t>(packed.size())) {
+        report += "CORE.GT4: gagal membaca data executable.\\n";
+        return false;
+    }
+    const uint16_t flags = uint16_t(packed[0]) | (uint16_t(packed[1]) << 8);
+    const uint32_t expectedSize = readLe32(packed.data() + 2);
+    if (expectedSize == 0 || expectedSize > 32u * 1024u * 1024u) {
+        report += "CORE.GT4: ukuran hasil dekompresi tidak valid.\\n";
+        return false;
+    }
+
+    std::vector<uint8_t> unpacked(static_cast<size_t>(expectedSize));
+    z_stream stream {};
+    stream.next_in = packed.data() + 6;
+    stream.avail_in = static_cast<uInt>(packed.size() - 6);
+    stream.next_out = unpacked.data();
+    stream.avail_out = static_cast<uInt>(unpacked.size());
+    if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+        report += "CORE.GT4: zlib gagal diinisialisasi.\\n";
+        return false;
+    }
+    const int result = inflate(&stream, Z_FINISH);
+    const uint64_t produced = stream.total_out;
+    inflateEnd(&stream);
+
+    char detail[192];
+    std::snprintf(detail, sizeof(detail),
+        "CORE.GT4: flags=0x%04X, target=%u byte, hasil=%llu byte.\\n",
+        flags, expectedSize, static_cast<unsigned long long>(produced));
+    report += detail;
+    if (result != Z_STREAM_END || produced != expectedSize) {
+        report += "CORE.GT4: dekompresi belum valid/utuh; executable tidak akan dijalankan.\\n";
+        return false;
+    }
+    report += "CORE.GT4: raw DEFLATE berhasil diperiksa. Ini baru validasi executable, belum menjalankan mesin PS2.\\n";
+    return true;
+}
 
 static uint32_t readLe32(const uint8_t* p) {
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
@@ -143,8 +190,8 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                             char detail[128];
                             std::snprintf(detail, sizeof(detail), "Executable: ELF32 little-endian, machine=%u, entry=0x%08X\n", machine, entry);
                             std::strncat(report, detail, sizeof(report)-std::strlen(report)-1);
-                            if (machine == 8) std::strncat(report, "Arsitektur MIPS terdeteksi (sesuai keluarga PS2).\\n", sizeof(report)-std::strlen(report)-1);
-                        } else std::strncat(report, "File BOOT2 ditemukan, tetapi header ELF standar tidak cocok.\\n", sizeof(report)-std::strlen(report)-1);
+                            if (machine == 8) std::strncat(report, "Arsitektur MIPS terdeteksi (sesuai keluarga PS2).\n", sizeof(report)-std::strlen(report)-1);
+                        } else std::strncat(report, "File BOOT2 ditemukan, tetapi header ELF standar tidak cocok.\n", sizeof(report)-std::strlen(report)-1);
                     }
                     break;
                 }
@@ -180,10 +227,15 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
                     std::string line = std::string(kind) + filename;
                     if (!(rec[25] & 0x02) && (filename == "CORE.GT4" || filename == "GT4.VOL")) {
                         const uint64_t bytes = readLe32(rec + 10);
+                        const uint64_t extent = uint64_t(readLe32(rec + 2)) * sectorSize;
                         char sizeText[96];
                         std::snprintf(sizeText, sizeof(sizeText), " — %.2f MiB", double(bytes) / (1024.0 * 1024.0));
                         line += sizeText;
                         line += (filename == "CORE.GT4") ? " [executable GT4: ditemukan]" : " [volume data GT4: ditemukan]";
+                        if (filename == "CORE.GT4" && extent <= fileSize && bytes <= fileSize - extent)
+                            inspectCore(fd, extent, bytes, report);
+                        if (filename == "GT4.VOL")
+                            std::strncat(report, "GT4.VOL: volume aset game ditemukan; isi volume belum diekstrak.\\n", sizeof(report)-std::strlen(report)-1);
                     }
                     line += "\n";
                     std::strncat(report, line.c_str(), sizeof(report)-std::strlen(report)-1);
