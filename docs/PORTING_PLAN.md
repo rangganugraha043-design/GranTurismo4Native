@@ -8,8 +8,10 @@ Build a native Android application for a legally dumped copy of Gran Turismo 4. 
 
 ## Research starting points
 - `gustavocanepa/gt4-decomp`: matching decompilation work for the GT4 NTSC-U executable. Its README identifies `CORE.GT4` as raw DEFLATE, loaded at `0x00100000`, with entry `0x00100008`. This is research input, not a ready-to-run Android engine.
-- `GT4Recomp` / Recompendium project: demonstrates ahead-of-time translation of EE code and VU microprograms, while still relying on PS2 graphics/runtime components. It is not a drop-in Android native port.
-- PS2 architecture references: EE and IOP are separate processors; VU0/VU1 and GS behavior are central to correct gameplay and rendering.
+- `ran-j/PS2Recomp`: experimental PS2 static recompiler/runtime with R5900 translation, guest memory/function dispatch, and separate IOP R3000A work. It is GPL-3.0 and its documented desktop build is not a drop-in Android ARM64 component; study its architecture before considering code reuse.
+- `ninjadynamics/PS2Docs`: archived Sony manuals covering EE/R5900, EE peripherals, VU, GS and SPU2. Use these as hardware specifications.
+- `ARMSX2`: an ARM64-oriented PS2 emulator project useful for Android platform/performance research, but it is an emulator rather than a source-level GT4 port.
+- Detailed links, license cautions, and a staged reuse strategy are maintained in [RESEARCH_NOTES.md](RESEARCH_NOTES.md).
 
 ## Engineering phases
 
