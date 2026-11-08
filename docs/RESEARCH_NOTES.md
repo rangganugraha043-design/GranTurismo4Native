@@ -160,3 +160,12 @@ The public GT4FS source was reviewed for the on-disk details that are easy to mi
 - Each TOC page is raw-DEFLATE decompressed; encrypted page bytes are then XORed with `0x55`.
 - Record pages and index pages share a 0x0C-byte header and a reverse table of 8-byte entries, but their entry payloads differ.
 - The current C++ implementation independently follows these documented structures with explicit read-size, page-count, and range limits. It does not copy GT4FS implementation code.
+
+
+## 8. RoFS record-node and path resolution (2026-11-08)
+
+The independent C++ reader now goes beyond TOC-page validation. It decodes record-page TOC entries using the page-end reverse table, reads the big-endian parent-node key and UTF-8 name, and interprets the little-endian record metadata for directory (node ID), file (page offset/date/real size), and compressed file (page offset/date/compressed size/real size). It collects directory node IDs and resolves child paths iteratively so a child can appear before its directory in the scanned page order. Index pages are structurally checked, but their B-tree separators are not yet traversed for keyed lookup; all record pages listed in the TOC offset table are scanned instead.
+
+The parser also cross-checks the sum of compressed page spans against the header's compressed TOC length and requires each raw-DEFLATE stream to consume its complete input and produce exactly one page. It applies the optional 0x55 data XOR only for encrypted volumes. The file payload page offset semantics have been identified in the reference implementation as `dataStart + pageOffset * pageLength`, where dataStart is `baseOffset + totalPageCount * pageLength`; this repository has not yet implemented payload reading, file extraction, or per-file decompression.
+
+Reference format details: https://nenkai.github.io/gt-modding-hub/formats/volume/ps2_gt4_volume/ . Independent implementation cross-check: https://github.com/Razer2015/GT4FS .
