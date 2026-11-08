@@ -8,6 +8,7 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 static int g_discFd = -1;
 static std::string g_discName = "No ISO selected";
@@ -31,19 +32,111 @@ struct RuntimeState {
     std::string discStatus = "No disc image passed from Android";
 };
 
+static uint32_t readLe32(const uint8_t* p) {
+    return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
+           (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
+}
+
+struct DiscFile {
+    std::string name;
+    uint64_t offset;
+    uint64_t size;
+    bool directory;
+};
+
+static void scanDiscDirectory(int fd, uint64_t imageBytes, uint64_t lba,
+                              uint64_t bytes, unsigned depth,
+                              std::vector<uint64_t>& visited,
+                              std::vector<DiscFile>& files) {
+    constexpr uint64_t sectorBytes = 2048;
+    constexpr uint64_t maxDirBytes = 2u * 1024u * 1024u;
+    if (depth > 6 || bytes == 0 || bytes > maxDirBytes ||
+        files.size() >= 2048 || lba > UINT64_MAX / sectorBytes) return;
+    for (uint64_t previous : visited) if (previous == lba) return;
+    const uint64_t offset = lba * sectorBytes;
+    if (offset > imageBytes || bytes > imageBytes - offset) return;
+    visited.push_back(lba);
+    std::vector<uint8_t> data(static_cast<size_t>(bytes));
+    if (pread(fd, data.data(), data.size(), static_cast<off_t>(offset)) !=
+        static_cast<ssize_t>(data.size())) return;
+    std::vector<DiscFile> children;
+    size_t pos = 0;
+    while (pos < data.size() && files.size() + children.size() < 2048) {
+        const uint8_t recordBytes = data[pos];
+        if (!recordBytes) {
+            pos = ((pos / sectorBytes) + 1) * sectorBytes;
+            continue;
+        }
+        if (recordBytes < 34 || pos + recordBytes > data.size()) break;
+        const uint8_t* rec = data.data() + pos;
+        const uint8_t nameBytes = rec[32];
+        if (nameBytes && size_t(33 + nameBytes) <= recordBytes) {
+            const bool dot = nameBytes == 1 && (rec[33] == 0 || rec[33] == 1);
+            if (!dot) {
+                std::string name(reinterpret_cast<const char*>(rec + 33), nameBytes);
+                const size_t version = name.find(';');
+                if (version != std::string::npos) name.resize(version);
+                while (!name.empty() && name.back() == '.') name.pop_back();
+                if (!name.empty()) {
+                    const uint64_t extent = readLe32(rec + 2);
+                    if (extent <= UINT64_MAX / sectorBytes) {
+                        children.push_back({name, extent * sectorBytes,
+                                            readLe32(rec + 10), (rec[25] & 2) != 0});
+                    }
+                }
+            }
+        }
+        pos += recordBytes;
+    }
+    for (const auto& item : children) files.push_back(item);
+    for (const auto& item : children) {
+        if (item.directory && depth < 6)
+            scanDiscDirectory(fd, imageBytes, item.offset / sectorBytes, item.size,
+                              depth + 1, visited, files);
+    }
+}
+
+static bool discNameIs(const std::string& value, const char* expected) {
+    if (value.size() != std::strlen(expected)) return false;
+    for (size_t i = 0; i < value.size(); ++i) {
+        char a = value[i], b = expected[i];
+        if (a >= 'a' && a <= 'z') a -= ('a' - 'A');
+        if (b >= 'a' && b <= 'z') b -= ('a' - 'A');
+        if (a != b) return false;
+    }
+    return true;
+}
+
 static std::string inspectDiscDescriptor(int fd) {
     if (fd < 0) return "NO ISO: choose a disc image in the launcher";
     struct stat st {};
     if (fstat(fd, &st) != 0 || st.st_size <= 0) return "ISO ERROR: descriptor is not readable";
     uint8_t pvd[2048] {};
     const ssize_t count = pread(fd, pvd, sizeof(pvd), 16 * 2048);
-    char details[160];
+    char details[180];
     std::snprintf(details, sizeof(details), "%s | %.2f GiB",
                   g_discName.c_str(), double(st.st_size) / (1024.0 * 1024.0 * 1024.0));
-    if (count != 2048) return std::string(details) + " | cannot read sector 16";
-    if (pvd[0] == 1 && std::memcmp(pvd + 1, "CD001", 5) == 0)
-        return std::string(details) + " | ISO-9660 PVD detected";
-    return std::string(details) + " | ISO-9660 PVD not found (UDF/other format?)";
+    if (count != 2048 || pvd[0] != 1 || std::memcmp(pvd + 1, "CD001", 5) != 0)
+        return std::string(details) + " | ISO-9660 PVD not found (UDF-only not supported)";
+    const uint8_t* root = pvd + 156;
+    if (root[0] < 34) return std::string(details) + " | invalid root directory record";
+    std::vector<uint64_t> visited;
+    std::vector<DiscFile> files;
+    scanDiscDirectory(fd, static_cast<uint64_t>(st.st_size), readLe32(root + 2),
+                      readLe32(root + 10), 0, visited, files);
+    const DiscFile* core = nullptr;
+    const DiscFile* volume = nullptr;
+    for (const auto& file : files) {
+        if (file.directory) continue;
+        if (discNameIs(file.name, "CORE.GT4")) core = &file;
+        if (discNameIs(file.name, "GT4.VOL")) volume = &file;
+    }
+    char summary[256];
+    std::snprintf(summary, sizeof(summary),
+        " | %zu ISO entries, %zu dirs | CORE.GT4: %s | GT4.VOL: %s",
+        files.size(), visited.size(), core ? "found" : "not found",
+        volume ? "found" : "not found");
+    return std::string(details) + summary;
 }
 
 SDL_AppResult SDL_AppInit(void** appstate, int, char**) {
