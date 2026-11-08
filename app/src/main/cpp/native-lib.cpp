@@ -386,6 +386,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         }
         const uint64_t relative = dataStartInVolume + uint64_t(node.pageOffset) * pageLength;
         if (relative > volumeBytes || storedBytes > volumeBytes - relative ||
+            relative > uint64_t(INT64_MAX) ||
             volumeOffset > uint64_t(INT64_MAX) - relative) {
             ++payloadSkipped;
             continue;
