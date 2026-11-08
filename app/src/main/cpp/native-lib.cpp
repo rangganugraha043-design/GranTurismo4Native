@@ -136,7 +136,11 @@ static uint32_t readBe32Local(const uint8_t* p) {
 }
 
 static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
-                                    uint64_t volumeBytes, std::string& report) {
+                                    uint64_t volumeBytes, std::string& report,
+                                    const char* requestedPath = nullptr,
+                                    uint8_t* fileOutput = nullptr,
+                                    size_t fileOutputCapacity = 0,
+                                    size_t* fileOutputSize = nullptr) {
     constexpr uint64_t pageBytes = 0x800;
     constexpr uint32_t offsetKey = 0x14ac327a;
     constexpr uint32_t maxPages = 1u << 18;
@@ -386,6 +390,92 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             if (nodes[i].type == 2) ++compressedCount;
         }
     }
+    if (fileOutputSize) *fileOutputSize = 0;
+    if (requestedPath && requestedPath[0] != '\0') {
+        std::string wanted(requestedPath);
+        while (!wanted.empty() && (wanted.front() == '/' || wanted.front() == '\\\\'))
+            wanted.erase(wanted.begin());
+        for (char& ch : wanted) if (ch == '\\\\') ch = '/';
+        auto equalPath = [](const std::string& a, const std::string& b) {
+            if (a.size() != b.size()) return false;
+            for (size_t k = 0; k < a.size(); ++k) {
+                char x = a[k], y = b[k];
+                if (x >= 'A' && x <= 'Z') x = char(x - 'A' + 'a');
+                if (y >= 'A' && y <= 'Z') y = char(y - 'A' + 'a');
+                if (x != y) return false;
+            }
+            return true;
+        };
+        size_t found = nodes.size();
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (pathState[i] == 2 && nodes[i].type != 0 &&
+                equalPath(paths[i], wanted)) { found = i; break; }
+        }
+        if (found == nodes.size()) {
+            report += "RoFS read: file path tidak ditemukan.\\n";
+            return false;
+        }
+        const RoFsNode& node = nodes[found];
+        if (node.realSize == 0 || node.realSize > 64u * 1024u * 1024u ||
+            !fileOutput || node.realSize > fileOutputCapacity) {
+            report += "RoFS read: ukuran file tidak valid atau buffer output terlalu kecil.\\n";
+            return false;
+        }
+        const uint64_t dataStart = headerOffset + uint64_t(totalPages) * pageLength;
+        const uint64_t relative = dataStart + uint64_t(node.pageOffset) * pageLength;
+        if (relative > volumeBytes || node.storedSize == 0 ||
+            node.storedSize > volumeBytes - relative ||
+            relative > uint64_t(INT64_MAX) ||
+            volumeOffset > uint64_t(INT64_MAX) - relative) {
+            report += "RoFS read: rentang payload di luar batas volume.\\n";
+            return false;
+        }
+        std::vector<uint8_t> stored(node.storedSize);
+        if (pread(fd, stored.data(), stored.size(),
+                  static_cast<off_t>(volumeOffset + relative)) !=
+            static_cast<ssize_t>(stored.size())) {
+            report += "RoFS read: gagal membaca payload file.\\n";
+            return false;
+        }
+        if (node.type == 1) {
+            if (node.storedSize != node.realSize) {
+                report += "RoFS read: ukuran file mentah tidak cocok dengan metadata.\\n";
+                return false;
+            }
+            std::memcpy(fileOutput, stored.data(), stored.size());
+        } else if (node.type == 2) {
+            if (stored.size() < 9 || readBe32Local(stored.data()) != 0xC5EEF7FFu ||
+                readLe32(stored.data() + 4) != (0u - node.realSize)) {
+                report += "RoFS read: wrapper PS2Zip tidak valid.\\n";
+                return false;
+            }
+            z_stream fileStream{};
+            fileStream.next_in = stored.data() + 8;
+            fileStream.avail_in = static_cast<uInt>(stored.size() - 8);
+            fileStream.next_out = fileOutput;
+            fileStream.avail_out = static_cast<uInt>(node.realSize);
+            if (inflateInit2(&fileStream, -MAX_WBITS) != Z_OK) {
+                report += "RoFS read: zlib gagal diinisialisasi.\\n";
+                return false;
+            }
+            const int inflateStatus = inflate(&fileStream, Z_FINISH);
+            const uint64_t outputBytes = fileStream.total_out;
+            const uint64_t inputBytes = fileStream.total_in;
+            inflateEnd(&fileStream);
+            if (inflateStatus != Z_STREAM_END || outputBytes != node.realSize ||
+                inputBytes != stored.size() - 8) {
+                report += "RoFS read: dekompresi PS2Zip tidak utuh.\\n";
+                return false;
+            }
+        } else {
+            report += "RoFS read: tipe node tidak didukung.\\n";
+            return false;
+        }
+        if (fileOutputSize) *fileOutputSize = node.realSize;
+        report += "RoFS read: file berhasil dibaca dan didekompresi: " + paths[found] + "\\n";
+        return true;
+    }
+
     // Validate a bounded sample of actual file payload ranges. Compressed
     // records use raw DEFLATE and must expand to the declared real size.
     uint32_t payloadRangesChecked = 0, payloadInflated = 0, payloadSkipped = 0;
@@ -745,4 +835,16 @@ extern "C" int gt4_inspect_rofs_fd(int fd, uint64_t volumeOffset,
     const bool valid = inspectGt4RofsHeader(fd, volumeOffset, volumeBytes, report);
     std::snprintf(output, outputCapacity, "%s", report.c_str());
     return valid ? 1 : 0;
+}
+
+extern "C" int gt4_read_rofs_file_fd(int fd, uint64_t volumeOffset,
+                                      uint64_t volumeBytes, const char* path,
+                                      uint8_t* output, size_t outputCapacity,
+                                      size_t* outputSize) {
+    if (outputSize) *outputSize = 0;
+    if (!path || !output || outputCapacity == 0 || !outputSize) return 0;
+    std::string report;
+    const bool ok = inspectGt4RofsHeader(fd, volumeOffset, volumeBytes, report,
+                                         path, output, outputCapacity, outputSize);
+    return ok ? 1 : 0;
 }
