@@ -117,6 +117,21 @@ static uint16_t readLe16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
 }
 
+struct RoFsNode {
+    uint32_t parent = 0;
+    uint32_t nodeId = 0;
+    uint32_t pageOffset = 0;
+    uint32_t realSize = 0;
+    uint32_t storedSize = 0;
+    uint8_t type = 0;
+    std::string name;
+};
+
+static uint32_t readBe32Local(const uint8_t* p) {
+    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) |
+           (uint32_t(p[2]) << 8) | uint32_t(p[3]);
+}
+
 static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                                     uint64_t volumeBytes, std::string& report) {
     constexpr uint64_t pageBytes = 0x800;
@@ -158,7 +173,6 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         report += "RoFS: header bukan RoFS v3.1 yang valid atau field di luar batas.\n";
         return false;
     }
-    // GT4FS reference: EntryCount+1 offsets, XORed with key*(index+1).
     const uint64_t offsetCount = uint64_t(tocPages) + 1;
     const uint64_t tableBytes = offsetCount * 4;
     if (tableBytes > volumeBytes - headerOffset - 0x40) {
@@ -175,16 +189,25 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     std::vector<uint32_t> offsets;
     offsets.reserve(static_cast<size_t>(offsetCount));
     uint32_t previous = 0;
+    uint64_t compressedSum = 0;
     for (uint32_t i = 0; i < offsetCount; ++i) {
         uint32_t value = readLe32(table.data() + size_t(i) * 4);
         if (encrypted) value ^= offsetKey * (i + 1u);
-        if ((i && value <= previous) || value > volumeBytes) {
-            report += "RoFS: offset halaman tidak monoton atau di luar volume.\n";
+        if ((i && value <= previous) || value > volumeBytes ||
+            (i == 0 && value < 0x40 + tableBytes)) {
+            report += "RoFS: offset halaman tidak monoton atau di luar area TOC.\n";
             return false;
         }
+        if (i) compressedSum += uint64_t(value - previous);
         offsets.push_back(value);
         previous = value;
     }
+    if (compressedSum != compressedTocBytes) {
+        report += "RoFS: jumlah panjang compressed page tidak cocok dengan header.\n";
+        return false;
+    }
+
+    std::vector<RoFsNode> nodes;
     uint32_t recordPages = 0, indexPages = 0;
     for (uint32_t i = 0; i < tocPages; ++i) {
         const uint32_t begin = offsets[i], finish = offsets[i + 1];
@@ -212,8 +235,10 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         }
         const int inflateResult = inflate(&stream, Z_FINISH);
         const uint64_t produced = stream.total_out;
+        const uint64_t consumed = stream.total_in;
         inflateEnd(&stream);
-        if (inflateResult != Z_STREAM_END || produced != pageLength) {
+        if (inflateResult != Z_STREAM_END || produced != pageLength ||
+            consumed != packed.size()) {
             report += "RoFS: TOC page gagal didekompresi ke ukuran page yang tepat.\n";
             return false;
         }
@@ -229,12 +254,12 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             report += "RoFS: header page tidak valid.\n";
             return false;
         }
-        const uint32_t entries = entryCount / 2;
-        for (uint32_t n = 0; n < entries; ++n) {
+        const uint32_t entryTotal = entryCount / 2;
+        for (uint32_t n = 0; n < entryTotal; ++n) {
             const size_t tocPos = pageLength - 8u * (n + 1u);
             const uint16_t entryOffset = readLe16(page.data() + tocPos);
             const uint16_t entryLength = readLe16(page.data() + tocPos + 2);
-            if (entryOffset < 12 || entryLength == 0 ||
+            if (entryOffset < 12 || entryLength < 5 ||
                 uint32_t(entryOffset) + entryLength > pageLength) {
                 report += "RoFS: referensi entri TOC keluar dari batas page.\n";
                 return false;
@@ -243,10 +268,37 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                 const uint16_t typeOffset = readLe16(page.data() + tocPos + 4);
                 const uint16_t typeLength = readLe16(page.data() + tocPos + 6);
                 if (typeLength < 5 || uint32_t(typeOffset) + typeLength > pageLength ||
-                    page[typeOffset] > 2) {
+                    typeOffset < 12 || page[typeOffset] > 2) {
                     report += "RoFS: metadata node pada record page tidak valid.\n";
                     return false;
                 }
+                RoFsNode node;
+                node.parent = readBe32Local(page.data() + entryOffset);
+                const size_t nameStart = size_t(entryOffset) + 4;
+                size_t nameEnd = nameStart + entryLength - 4;
+                while (nameEnd > nameStart && page[nameEnd - 1] == 0) --nameEnd;
+                if (nameEnd == nameStart || nameEnd - nameStart > 255) {
+                    report += "RoFS: nama node kosong/terlalu panjang.\n";
+                    return false;
+                }
+                node.name.assign(reinterpret_cast<const char*>(page.data() + nameStart),
+                                 nameEnd - nameStart);
+                const uint8_t* meta = page.data() + typeOffset;
+                node.type = meta[0];
+                if (node.type == 0) {
+                    if (typeLength < 5) return false;
+                    node.nodeId = readLe32(meta + 1);
+                } else if (node.type == 1) {
+                    if (typeLength < 13) return false;
+                    node.pageOffset = readLe32(meta + 1);
+                    node.storedSize = node.realSize = readLe32(meta + 9);
+                } else {
+                    if (typeLength < 17) return false;
+                    node.pageOffset = readLe32(meta + 1);
+                    node.storedSize = readLe32(meta + 9);
+                    node.realSize = readLe32(meta + 13);
+                }
+                nodes.push_back(std::move(node));
             } else {
                 const uint32_t childPage = readLe32(page.data() + tocPos + 4);
                 if (childPage >= tocPages) {
@@ -257,12 +309,69 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         }
         if (pageType == 0) ++recordPages; else ++indexPages;
     }
-    char result[192];
+    if (nodes.size() > 100000) {
+        report += "RoFS: jumlah node melebihi batas aman.\n";
+        return false;
+    }
+
+    std::vector<std::string> paths(nodes.size());
+    std::vector<bool> resolved(nodes.size(), false);
+    // Directory node IDs form the parent links. Resolve iteratively so record
+    // page ordering does not have to match directory creation order.
+    for (size_t pass = 0; pass < nodes.size() + 1; ++pass) {
+        bool changed = false;
+        for (size_t i = 0; i < nodes.size(); ++i) {
+            if (resolved[i]) continue;
+            const RoFsNode& node = nodes[i];
+            std::string parentPath;
+            if (node.parent == 0) {
+                parentPath.clear();
+            } else {
+                bool foundParent = false;
+                for (size_t j = 0; j < nodes.size(); ++j) {
+                    if (nodes[j].type == 0 && nodes[j].nodeId == node.parent && resolved[j]) {
+                        parentPath = paths[j];
+                        foundParent = true;
+                        break;
+                    }
+                }
+                if (!foundParent) continue;
+            }
+            paths[i] = parentPath.empty() ? node.name : parentPath + "/" + node.name;
+            resolved[i] = true;
+            changed = true;
+        }
+        if (!changed) break;
+    }
+    size_t resolvedCount = 0, fileCount = 0, dirCount = 0, compressedCount = 0;
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (!resolved[i]) continue;
+        ++resolvedCount;
+        if (nodes[i].type == 0) ++dirCount;
+        else {
+            ++fileCount;
+            if (nodes[i].type == 2) ++compressedCount;
+        }
+    }
+    char result[256];
     std::snprintf(result, sizeof(result),
-        "RoFS TOC: %u/%u page berhasil didekompresi dan divalidasi (%u record, %u index).\n",
-        tocPages, tocPages, recordPages, indexPages);
+        "RoFS TOC: %u page (%u record, %u index); %zu node (%zu path terurai, %zu folder, %zu file, %zu compressed).\n",
+        tocPages, recordPages, indexPages, nodes.size(), resolvedCount,
+        dirCount, fileCount, compressedCount);
     report += result;
-    report += "RoFS: halaman TOC tervalidasi; resolusi path/node dan ekstraksi file belum tersedia.\n";
+    report += "Contoh path dalam GT4.VOL:\n";
+    size_t shown = 0;
+    for (size_t i = 0; i < nodes.size() && shown < 18; ++i) {
+        if (!resolved[i] || nodes[i].type == 0) continue;
+        char detail[96];
+        std::snprintf(detail, sizeof(detail), "  %s (%u byte%s)\n",
+            paths[i].c_str(), nodes[i].realSize, nodes[i].type == 2 ? ", compressed" : "");
+        report += detail;
+        ++shown;
+    }
+    if (resolvedCount != nodes.size())
+        report += "Peringatan: sebagian node belum punya parent folder yang dikenali; belum ditampilkan sebagai path.\n";
+    report += "RoFS: path node berhasil dibangun. Pembacaan payload file dan dekompresi aset belum tersedia.\n";
     return true;
 }
 
