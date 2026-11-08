@@ -146,9 +146,9 @@ static std::string inspectDiscDescriptor(int fd) {
         char rofsReport[4096]{};
         const int valid = gt4_inspect_rofs_fd(fd, volume->offset, volume->size,
                                                rofsReport, sizeof(rofsReport));
-        SDL_Log("GT4.VOL RoFS inspection (%s):\\n%s",
+        SDL_Log("GT4.VOL RoFS inspection (%s):\n%s",
                 valid ? "valid" : "not validated", rofsReport);
-        const char* firstLineEnd = std::strchr(rofsReport, '\\n');
+        const char* firstLineEnd = std::strchr(rofsReport, '\n');
         if (firstLineEnd) {
             result += valid ? " | RoFS TOC parsed" : " | RoFS TOC not validated";
             result += " | ";
