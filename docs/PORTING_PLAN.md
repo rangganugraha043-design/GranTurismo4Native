@@ -45,7 +45,7 @@ PS2Recomp and PS2 hardware documentation remain useful references for understand
    - Use PS2 manuals and emulator/recompiler projects as behavioral references, not as the shipped runtime.
 
 4. **Android application shell**
-   - Move from the current temporary Kotlin inspector screen toward an SDL3/C++ application lifecycle similar in structure to GT3R.
+   - The app now has a separate SDL3/C++ runtime test activity and native render loop. Next: move SAF URI selection and handoff into the SDL3 host, then replace the test renderer with GT4-specific rendering systems.
    - Keep the Android Java/Kotlin layer small: activity lifecycle, SAF picker, URI/file descriptor handoff, permissions, and Android-specific integration.
    - Native layer owns the game loop, rendering, audio, input mapping, and in-game menus.
    - Support ARM64 first; add other ABIs only when build and performance evidence justify them.
@@ -75,7 +75,7 @@ No calendar date is promised for a playable build. The full native port is a sub
 
 The existing Android project is an early Kotlin/JNI prototype. It can select a user-provided image and inspect a limited ISO-9660 root directory. It recognizes SYSTEM.CNF, a possible BOOT2 ELF, and root-level CORE.GT4 / GT4.VOL; it can perform bounded raw-DEFLATE and CORE section-table checks.
 
-This is not yet the GT3R-style native app shell and does not run GT4. The scanner currently lacks recursive directory traversal, full UDF support, multi-extent support, GT4.VOL parsing, the native game loop, renderer, audio engine, and GT4 runtime.
+The repository now includes a minimal SDL3 Android activity and native render loop as a platform smoke test. It does not yet provide GT3R-level SAF integration in the SDL activity, render GT4 assets, or run GT4. The scanner currently lacks recursive directory traversal, full UDF support, multi-extent support, GT4.VOL parsing, the native game loop, renderer, audio engine, and GT4 runtime.
 
 ## Current prototype work (2026-11-07)
 
@@ -95,3 +95,12 @@ This is not yet the GT3R-style native app shell and does not run GT4. The scanne
 - Keep upstream MIT notices for GT4 decompilation material where applicable.
 - Do not copy GPL-3.0 implementation code from experimental projects into this repository without an explicit licensing decision.
 - Keep a source/provenance manifest for imported or adapted code.
+
+
+## SDL3 Android shell work (2026-11-08)
+
+- Pinned SDL3 to release-3.4.12 for both Android Java glue and native CMake sources.
+- Added a separate SDLActivity host so the existing Kotlin ISO inspector remains available.
+- Added a minimal SDL callback lifecycle, SDL renderer loop, touch-event feedback, and controller connection logging.
+- Added CI checkout of SDL3 before Gradle config/build; the SDL source checkout is ignored and is not committed into this repository.
+- This is a platform smoke test only. It does not yet implement GT4 gameplay, GT4 rendering, audio playback, SAF handoff into SDL, or a complete controller mapping.
