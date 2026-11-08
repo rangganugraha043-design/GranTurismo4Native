@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <cstdint>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -365,8 +366,10 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         if (canResolve) {
             for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
                 const size_t index = *it;
-                paths[index] = basePath.empty() ? nodes[index].name
-                                                : basePath + "/" + nodes[index].name;
+                paths[index] = (nodes[index].parent == 0 && nodes[index].name == ".")
+                    ? std::string()
+                    : (basePath.empty() ? nodes[index].name
+                                        : basePath + "/" + nodes[index].name);
                 basePath = paths[index];
                 pathState[index] = 2;
             }
@@ -375,7 +378,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         }
     }
     for (size_t i = 0; i < nodes.size(); ++i) {
-        if (pathState[i] != 2 || paths[i].empty()) continue;
+        if (pathState[i] != 2) continue;
         ++resolvedCount;
         if (nodes[i].type == 0) ++dirCount;
         else {
@@ -414,10 +417,16 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             continue;
         }
         if (node.type == 2) {
+            // PS2Zip wrapper: magic, negative output length, then raw DEFLATE.
+            if (payload.size() < 9 || readBe32Local(payload.data()) != 0xC5EEF7FFu ||
+                readLe32(payload.data() + 4) != (0u - node.realSize)) {
+                ++payloadSkipped;
+                continue;
+            }
             std::vector<uint8_t> unpacked(node.realSize);
             z_stream fileStream{};
-            fileStream.next_in = payload.data();
-            fileStream.avail_in = static_cast<uInt>(payload.size());
+            fileStream.next_in = payload.data() + 8;
+            fileStream.avail_in = static_cast<uInt>(payload.size() - 8);
             fileStream.next_out = unpacked.data();
             fileStream.avail_out = static_cast<uInt>(unpacked.size());
             if (inflateInit2(&fileStream, -MAX_WBITS) != Z_OK) {
@@ -429,7 +438,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             const uint64_t inputBytes = fileStream.total_in;
             inflateEnd(&fileStream);
             if (inflateStatus != Z_STREAM_END || outputBytes != node.realSize ||
-                inputBytes != payload.size()) {
+                inputBytes != payload.size() - 8) {
                 ++payloadSkipped;
                 continue;
             }
