@@ -40,3 +40,8 @@ The inspector also performs a bounded sample of file-payload reads using the RoF
 
 
 The RoFS locator now searches the first 10,000 volume pages for the v3.1 header instead of assuming one fixed TOC page, and validates the big-endian magic plus little-endian version/header fields. File-payload sampling recognizes the PS2Zip 8-byte wrapper (`C5 EE F7 FF`, negative expanded length) before inflating its raw-DEFLATE body. The root directory marker is normalized so child paths do not receive a spurious `./` prefix.
+
+
+### SDL runtime now calls the RoFS reader
+
+The SDL3 native activity now links against the same `gt4native` library used by the launcher. When the selected ISO contains `GT4.VOL`, the runtime passes the volume's file-descriptor range to the shared read-only RoFS inspector and writes the detailed TOC/path/payload-sample report to Android logcat. This removes the previous gap where only the launcher inspected RoFS while the SDL screen merely detected the volume. The runtime still does not load GT4 code, decode game assets, or render gameplay.
