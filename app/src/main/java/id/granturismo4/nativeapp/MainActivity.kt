@@ -35,7 +35,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         status = TextView(this).apply {
-            text = "Pilih image game milikmu untuk pemeriksaan format."
+            text = "Pilih image game milikmu untuk pemeriksaan format. Runtime native SDL3 tersedia untuk uji layar dan input."
             textSize = 15f
             setPadding(0, 32, 0, 24)
         }
@@ -43,9 +43,13 @@ class MainActivity : Activity() {
             text = "PILIH FILE ISO"
             setOnClickListener { openIsoPicker() }
         }
+        val nativeRuntime = Button(this).apply {
+            text = "BUKA NATIVE RUNTIME (UJI)"
+            setOnClickListener { startActivity(Intent(this@MainActivity, NativeGameActivity::class.java)) }
+        }
         val build = TextView(this).apply {
             text = "Native core: " + nativeVersion() +
-                "\nStatus: ISO inspection prototype — belum menjalankan game."
+                "\nStatus: ISO scanner + SDL3 runtime test — belum menjalankan game."
             textSize = 12f
             setPadding(0, 24, 0, 0)
         }
@@ -53,6 +57,7 @@ class MainActivity : Activity() {
         root.addView(subtitle)
         root.addView(status)
         root.addView(choose)
+        root.addView(nativeRuntime)
         root.addView(build)
         setContentView(root)
 
