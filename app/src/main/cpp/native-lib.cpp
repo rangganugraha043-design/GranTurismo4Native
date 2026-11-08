@@ -137,31 +137,46 @@ static uint32_t readBe32Local(const uint8_t* p) {
 static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                                     uint64_t volumeBytes, std::string& report) {
     constexpr uint64_t pageBytes = 0x800;
-    constexpr uint64_t retailTocPage = 0x2159;
     constexpr uint32_t offsetKey = 0x14ac327a;
     constexpr uint32_t maxPages = 1u << 18;
     constexpr uint32_t maxCompressedPage = 1024u * 1024u;
-    const uint64_t headerOffset = retailTocPage * pageBytes;
-    if (volumeBytes < headerOffset + 0x40 ||
-        volumeOffset > UINT64_MAX - headerOffset) {
-        report += "RoFS: volume terlalu kecil untuk TOC retail GT4.\n";
+    uint64_t headerOffset = UINT64_MAX;
+    uint8_t header[0x40]{};
+    const uint64_t scanPages = std::min<uint64_t>(volumeBytes / pageBytes, 10000);
+    for (uint64_t page = 0; page < scanPages; ++page) {
+        const uint64_t candidate = page * pageBytes;
+        if (volumeOffset > UINT64_MAX - candidate ||
+            volumeOffset + candidate > uint64_t(INT64_MAX)) break;
+        uint8_t probe[8]{};
+        if (pread(fd, probe, sizeof(probe),
+                  static_cast<off_t>(volumeOffset + candidate)) != sizeof(probe)) break;
+        const uint32_t candidateMagic = readBe32Local(probe);
+        const uint32_t candidateVersion = readLe32(probe + 4);
+        if ((candidateMagic == 0xAD90B9ACu || candidateMagic == 0x526F4653u) &&
+            candidateVersion == 0x00030001u) {
+            headerOffset = candidate;
+            break;
+        }
+    }
+    if (headerOffset == UINT64_MAX || volumeBytes - headerOffset < sizeof(header)) {
+        report += "RoFS: TOC v3.1 tidak ditemukan dalam 10.000 halaman pertama volume.\n";
         return false;
     }
-    uint8_t header[0x40]{};
     if (pread(fd, header, sizeof(header),
               static_cast<off_t>(volumeOffset + headerOffset)) != sizeof(header)) {
         report += "RoFS: gagal membaca header TOC.\n";
         return false;
     }
-    const uint32_t magic = readLe32(header);
-    const uint16_t major = readLe16(header + 4);
-    const uint16_t minor = readLe16(header + 6);
+    const uint32_t magic = readBe32Local(header);
+    const uint32_t version = readLe32(header + 4);
+    const uint16_t major = static_cast<uint16_t>(version >> 16);
+    const uint16_t minor = static_cast<uint16_t>(version & 0xffffu);
     const uint32_t compressedTocBytes = readLe32(header + 8);
     const uint32_t totalPages = readLe32(header + 12);
     const uint16_t pageLength = readLe16(header + 16);
     const uint16_t tocPages = readLe16(header + 18);
     const bool encrypted = magic == 0xAD90B9ACu;
-    const bool plain = magic == 0x53466F52u;
+    const bool plain = magic == 0x526F4653u;
     char summary[256];
     std::snprintf(summary, sizeof(summary),
         "RoFS v%u.%u: header 0x%llX, page 0x%X, total pages=%u, TOC pages=%u, compressed TOC=%u bytes.\n",
