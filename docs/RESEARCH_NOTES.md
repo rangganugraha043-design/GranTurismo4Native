@@ -172,3 +172,12 @@ Reference format details: https://nenkai.github.io/gt-modding-hub/formats/volume
 
 
 A further bounded payload check reads up to eight small file payloads (with a 16 MiB aggregate input budget and per-file caps). It validates raw file ranges and attempts raw-DEFLATE for compressed records, requiring the expanded size to match the TOC metadata. The data start calculation includes the actual retail TOC base page: `baseOffset + totalPageCount * pageLength`, then `pageOffset * pageLength`. This remains a sample check; it is not a complete extractor and does not decode GT4-specific texture, model, database, sound, or movie formats.
+
+
+## 9. RoFS header and PS2Zip payload correction (2026-11-08)
+
+A source-level cross-check against GT4FS showed two details worth correcting in the reader. First, GT4FS locates the RoFS v3.1 header by scanning up to 10,000 0x800-byte pages, not by assuming one fixed location. The magic is read big-endian (`0xAD90B9AC` encrypted or `RoFS` plain), while the version and remaining header fields are little-endian; version `0x00030001` means 3.1. The native reader now follows this byte-order split and dynamic scan.
+
+Second, compressed file records are not bare raw-DEFLATE streams. Their stored payload begins with an 8-byte PS2Zip wrapper: magic `C5 EE F7 FF`, followed by the negative expanded byte count in little-endian, followed by the raw-DEFLATE stream. The bounded payload validator now checks this wrapper and inflates only the bytes after it, matching the TOC compressed-size/real-size metadata. The root directory entry (`.` with parent ID 0) is treated as the root path rather than a literal folder name.
+
+Reference implementation used for format cross-check: https://github.com/Razer2015/GT4FS (Volume.cs, TocHeader.cs, BTree.cs, PS2Zip.cs).
