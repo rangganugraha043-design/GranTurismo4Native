@@ -28,12 +28,12 @@ APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 ## Development plan
 See [docs/PORTING_PLAN.md](docs/PORTING_PLAN.md) for the staged plan and [docs/RESEARCH_NOTES.md](docs/RESEARCH_NOTES.md) for reviewed external GT4/PS2 research, upstream links, license notes and reuse decisions.
 
-The scanner does not yet support UDF-only images, multi-extent ISO files, or traversing the RoFS B-tree, resolving file paths, and extracting/decompressing file payloads from `GT4.VOL`; it also does not load/execute the GT4 program. The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
+The scanner still does not support UDF-only images or multi-extent ISO files, and it does not load/execute the GT4 program. The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
 
 
 ### GT4 RoFS index progress (2026-11-08)
 
-The read-only GT4.VOL inspector now decompresses every v3.1 TOC page, validates record/index page structures and record metadata ranges, reads parent node IDs and directory/file metadata, and resolves paths by following directory node IDs. It reports a bounded sample of discovered file paths and sizes. It still does not read file payload pages, inflate compressed assets, decode textures/models/audio, or start the GT4 runtime. The parser currently targets the retail GT4 TOC location (`0x2159` pages) and is not a universal parser for every GT4-family volume.
+The read-only GT4.VOL inspector now decompresses every v3.1 TOC page, validates record/index page structures and record metadata ranges, reads parent node IDs and directory/file metadata, and resolves paths by following directory node IDs. It reports a bounded sample of discovered file paths and sizes. It can now attempt bounded reads of selected file payloads, including PS2Zip-wrapped raw-DEFLATE data. This is only a smoke test: it does not yet provide a complete extraction pipeline or decode textures/models/audio, and it does not start the GT4 runtime. The parser currently targets the retail GT4 TOC location (`0x2159` pages) and is not a universal parser for every GT4-family volume.
 
 
 The inspector also performs a bounded sample of file-payload reads using the RoFS data-start/page-offset calculation. For compressed records it attempts raw-DEFLATE expansion and checks the declared output size; this is a format-validation step, not yet a complete asset extraction/decoding pipeline.
@@ -45,3 +45,8 @@ The RoFS locator now searches the first 10,000 volume pages for the v3.1 header 
 ### SDL runtime now calls the RoFS reader
 
 The SDL3 native activity now links against the same `gt4native` library used by the launcher. When the selected ISO contains `GT4.VOL`, the runtime passes the volume's file-descriptor range to the shared read-only RoFS inspector and writes the detailed TOC/path/payload-sample report to Android logcat. This removes the previous gap where only the launcher inspected RoFS while the SDL screen merely detected the volume. The runtime still does not load GT4 code, decode game assets, or render gameplay.
+
+
+### Current build verification
+
+The latest GitHub Actions run for commit `96b28337ed5833066bbd14da9f5a433ca410b122` completed successfully. This verifies that the Android debug APK compiles; it does not verify parsing against a real GT4 image or gameplay on a phone. The next validation gate is to test the reader against a legally owned GT4 image and record the exact TOC/path/payload results before beginning asset decoders.
