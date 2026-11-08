@@ -37,3 +37,6 @@ The read-only GT4.VOL inspector now decompresses every v3.1 TOC page, validates 
 
 
 The inspector also performs a bounded sample of file-payload reads using the RoFS data-start/page-offset calculation. For compressed records it attempts raw-DEFLATE expansion and checks the declared output size; this is a format-validation step, not yet a complete asset extraction/decoding pipeline.
+
+
+The RoFS locator now searches the first 10,000 volume pages for the v3.1 header instead of assuming one fixed TOC page, and validates the big-endian magic plus little-endian version/header fields. File-payload sampling recognizes the PS2Zip 8-byte wrapper (`C5 EE F7 FF`, negative expanded length) before inflating its raw-DEFLATE body. The root directory marker is normalized so child paths do not receive a spurious `./` prefix.
