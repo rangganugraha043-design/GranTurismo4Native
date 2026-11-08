@@ -7,13 +7,15 @@ This repository currently builds an Android shell with:
 - Android Storage Access Framework ISO file picker.
 - C++ JNI library for read-only disc inspection.
 - SDL3 native Android activity with a basic renderer loop and touch-event feedback test.
+- SAF-to-native file-descriptor handoff: the selected ISO is opened by Android and passed to SDL/C++ without copying the entire image.
+- Runtime smoke test reads the selected descriptor's size and ISO-9660 primary-volume-descriptor signature.
 - Read-only ISO-9660 signature and bounded recursive directory scan (up to 8 levels).
 - Detection of nested `SYSTEM.CNF`, its `BOOT2` path, and a basic ELF32/MIPS header.
 - Detection and bounded raw-DEFLATE/header inspection of `CORE.GT4`.
 - Detection of `GT4.VOL` and persisted access to the last selected document when Android permits it.
 - GitHub Actions workflow for a debug APK.
 
-**The SDL3 screen is only a platform/runtime smoke test. It does not yet render GT4 assets, run GT4 logic, or produce game audio. This is not a playable GT4 port yet.** A PS2 disc image contains software for the Emotion Engine (MIPS R5900), IOP (MIPS R3000A), vector units, DMA/VIF/GIF, Graphics Synthesizer and SPU2. Android ARM64 cannot run that software directly. A real port needs a CPU translation/runtime and substantial PS2 subsystem compatibility work.
+**The SDL3 screen is only a platform/runtime + ISO-descriptor handoff smoke test. It does not yet parse the full disc from SDL, render GT4 assets, run GT4 logic, or produce game audio. This is not a playable GT4 port yet.** A PS2 disc image contains software for the Emotion Engine (MIPS R5900), IOP (MIPS R3000A), vector units, DMA/VIF/GIF, Graphics Synthesizer and SPU2. Android ARM64 cannot run that software directly. A real port needs a CPU translation/runtime and substantial PS2 subsystem compatibility work.
 
 ## Research direction
 The project will use public reverse-engineering/decompilation research as engineering references, not redistribute game code or assets. In particular, the GT4 decompilation research documents the `CORE.GT4` executable format and is a starting point for a future extraction/loader phase. This does not mean that a ready-made Android runtime exists.
