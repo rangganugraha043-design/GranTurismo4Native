@@ -117,6 +117,85 @@ static uint16_t readLe16(const uint8_t* p) {
     return uint16_t(p[0]) | (uint16_t(p[1]) << 8);
 }
 
+static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
+                                    uint64_t volumeBytes, std::string& report) {
+    // Retail GT4 uses a RoFS v3.1 volume. Its real TOC header is at page
+    // 0x2159 (0x800 bytes/page); the apparent GT3-like header at byte 0 is a decoy.
+    constexpr uint64_t pageBytes = 0x800;
+    constexpr uint64_t retailTocPage = 0x2159;
+    constexpr uint32_t offsetKey = 0x14ac327a;
+    constexpr uint32_t maxPages = 1u << 20;
+    constexpr uint32_t maxTocBytes = 64u * 1024u * 1024u;
+    const uint64_t headerOffset = retailTocPage * pageBytes;
+    if (volumeBytes < headerOffset + 0x40 ||
+        volumeOffset > UINT64_MAX - headerOffset) {
+        report += "RoFS: volume terlalu kecil untuk header TOC retail GT4.\n";
+        return false;
+    }
+    uint8_t header[0x40]{};
+    if (pread(fd, header, sizeof(header),
+              static_cast<off_t>(volumeOffset + headerOffset)) != sizeof(header)) {
+        report += "RoFS: gagal membaca header TOC.\n";
+        return false;
+    }
+    const uint32_t magic = readLe32(header);
+    const uint16_t major = readLe16(header + 4);
+    const uint16_t minor = readLe16(header + 6);
+    const uint32_t compressedTocBytes = readLe32(header + 8);
+    const uint32_t totalPages = readLe32(header + 12);
+    const uint16_t pageLength = readLe16(header + 16);
+    const uint16_t tocPages = readLe16(header + 18);
+    const bool encryptedMagic = magic == 0xAD90B9ACu;
+    const bool plainMagic = magic == 0x53466F52u; // "RoFS"
+    char summary[256];
+    std::snprintf(summary, sizeof(summary),
+        "RoFS header @0x%llX: magic=0x%08X, version=%u.%u, page=0x%X, pages=%u, TOC pages=%u, compressed TOC=%u bytes.\n",
+        static_cast<unsigned long long>(headerOffset), magic, major, minor,
+        pageLength, totalPages, tocPages, compressedTocBytes);
+    report += summary;
+    if ((!encryptedMagic && !plainMagic) || major != 3 || minor != 1 ||
+        pageLength != pageBytes || totalPages == 0 || totalPages > maxPages ||
+        tocPages == 0 || tocPages > totalPages ||
+        compressedTocBytes == 0 || compressedTocBytes > maxTocBytes) {
+        report += "RoFS: header bukan RoFS v3.1 retail yang valid atau field di luar batas.\n";
+        return false;
+    }
+    // The page-offset array has totalPages+1 little-endian values.
+    // Retail stores them XOR-obfuscated; plain RoFS magic means no encryption.
+    const uint64_t offsetCount = uint64_t(totalPages) + 1;
+    if (offsetCount > (UINT64_MAX - 0x40) / 4) return false;
+    const uint64_t tableBytes = offsetCount * 4;
+    if (0x40 + tableBytes > volumeBytes - headerOffset) {
+        report += "RoFS: tabel page-offset melewati batas file volume.\n";
+        return false;
+    }
+    std::vector<uint8_t> table(static_cast<size_t>(tableBytes));
+    if (pread(fd, table.data(), table.size(),
+              static_cast<off_t>(volumeOffset + headerOffset + 0x40)) !=
+        static_cast<ssize_t>(table.size())) {
+        report += "RoFS: gagal membaca tabel page-offset.\n";
+        return false;
+    }
+    uint32_t previous = 0;
+    bool offsetsValid = true;
+    for (uint32_t i = 0; i <= totalPages; ++i) {
+        const uint32_t stored = readLe32(table.data() + size_t(i) * 4);
+        const uint32_t decoded = plainMagic
+            ? stored : (stored ^ (uint32_t(i * offsetKey) + offsetKey));
+        if (i && decoded < previous) offsetsValid = false;
+        if (decoded > compressedTocBytes) offsetsValid = false;
+        previous = decoded;
+    }
+    if (!offsetsValid) {
+        report += "RoFS: tabel offset tidak monoton/di luar rentang TOC; tidak akan diekstrak.\n";
+        return false;
+    }
+    report += encryptedMagic
+        ? "RoFS: magic dan tabel offset terenkripsi dikenali; indeks node belum didekode.\n"
+        : "RoFS: magic tidak terenkripsi; indeks node belum didekode.\n";
+    return true;
+}
+
 static uint32_t readLe32(const uint8_t* p) {
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) |
            (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
@@ -357,6 +436,9 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
         std::snprintf(detail, sizeof(detail), "GT4.VOL: %s — %.2f MiB [ditemukan]\n",
                       volumeFile->path.c_str(), double(volumeFile->size) / (1024.0 * 1024.0));
         appendReport(report, sizeof(report), detail);
+        std::string rofsReport;
+        inspectGt4RofsHeader(fd, volumeFile->offset, volumeFile->size, rofsReport);
+        appendReport(report, sizeof(report), rofsReport);
     } else appendReport(report, sizeof(report), "GT4.VOL tidak ditemukan dalam pohon ISO-9660.\n");
 
     appendReport(report, sizeof(report), "Contoh entri:\n");
