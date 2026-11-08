@@ -35,7 +35,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         status = TextView(this).apply {
-            text = "Pilih image game milikmu untuk pemeriksaan format. Runtime native SDL3 tersedia untuk uji layar dan input."
+            text = "Pilih image game milikmu. ISO akan diperiksa dan dapat diteruskan ke runtime native."
             textSize = 15f
             setPadding(0, 32, 0, 24)
         }
@@ -44,12 +44,17 @@ class MainActivity : Activity() {
             setOnClickListener { openIsoPicker() }
         }
         val nativeRuntime = Button(this).apply {
-            text = "BUKA NATIVE RUNTIME (UJI)"
-            setOnClickListener { startActivity(Intent(this@MainActivity, NativeGameActivity::class.java)) }
+            text = "BUKA NATIVE RUNTIME"
+            setOnClickListener {
+                val saved = preferences.getString("last_disc_uri", null)
+                val intent = Intent(this@MainActivity, NativeGameActivity::class.java)
+                if (saved != null) intent.putExtra(NativeGameActivity.EXTRA_DISC_URI, saved)
+                startActivity(intent)
+            }
         }
         val build = TextView(this).apply {
             text = "Native core: " + nativeVersion() +
-                "\nStatus: ISO scanner + SDL3 runtime test — belum menjalankan game."
+                "\nStatus: ISO scanner + SDL3 runtime; handoff ISO sedang dikembangkan."
             textSize = 12f
             setPadding(0, 24, 0, 0)
         }
@@ -61,7 +66,6 @@ class MainActivity : Activity() {
         root.addView(build)
         setContentView(root)
 
-        // Reuse the user's previously selected disc when Android still grants access.
         preferences.getString("last_disc_uri", null)?.let { saved ->
             try {
                 inspectSelectedDisc(Uri.parse(saved))
@@ -106,15 +110,13 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode != pickIso || resultCode != RESULT_OK) return
         val uri = data?.data ?: return
-        val grantedFlags = (data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        val grantedFlags = data.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION
         try {
-            if (grantedFlags != 0) {
-                contentResolver.takePersistableUriPermission(uri, grantedFlags)
-                preferences.edit().putString("last_disc_uri", uri.toString()).apply()
-            }
+            if (grantedFlags != 0) contentResolver.takePersistableUriPermission(uri, grantedFlags)
         } catch (_: SecurityException) {
-            // Some document providers offer temporary access only; inspect this selection anyway.
+            // Temporary access may still be valid for this app session.
         }
+        preferences.edit().putString("last_disc_uri", uri.toString()).apply()
         try {
             inspectSelectedDisc(uri)
         } catch (e: Exception) {
