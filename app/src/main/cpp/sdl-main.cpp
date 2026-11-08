@@ -16,6 +16,10 @@ static std::string g_discName = "No ISO selected";
 extern "C" int gt4_inspect_rofs_fd(int fd, uint64_t volumeOffset,
                                     uint64_t volumeBytes, char* output,
                                     size_t outputCapacity);
+extern "C" int gt4_read_rofs_file_fd(int fd, uint64_t volumeOffset,
+                                      uint64_t volumeBytes, const char* path,
+                                      uint8_t* output, size_t outputCapacity,
+                                      size_t* outputSize);
 
 
 extern "C" JNIEXPORT void JNICALL
@@ -156,6 +160,47 @@ static std::string inspectDiscDescriptor(int fd) {
         } else if (rofsReport[0]) {
             result += " | ";
             result += rofsReport;
+        }
+
+        // Exercise the actual path-based VFS read on one bounded TOC sample.
+        // This verifies metadata -> data-page addressing -> raw/PS2Zip payload.
+        if (valid) {
+            const std::string reportText(rofsReport);
+            const std::string marker = "Contoh path dalam GT4.VOL:\n";
+            const size_t markerAt = reportText.find(marker);
+            bool extracted = false;
+            if (markerAt != std::string::npos) {
+                size_t lineAt = markerAt + marker.size();
+                for (unsigned attempt = 0; attempt < 18 && lineAt < reportText.size(); ++attempt) {
+                    const size_t lineEnd = reportText.find('\n', lineAt);
+                    const size_t end = lineEnd == std::string::npos ? reportText.size() : lineEnd;
+                    std::string line = reportText.substr(lineAt, end - lineAt);
+                    lineAt = lineEnd == std::string::npos ? reportText.size() : lineEnd + 1;
+                    if (line.rfind("  ", 0) != 0) break;
+                    line.erase(0, 2);
+                    const size_t sizeLabel = line.rfind(" (");
+                    if (sizeLabel == std::string::npos || sizeLabel == 0) continue;
+                    const std::string path = line.substr(0, sizeLabel);
+                    std::vector<uint8_t> decoded(16u * 1024u * 1024u);
+                    size_t decodedBytes = 0;
+                    if (gt4_read_rofs_file_fd(fd, volume->offset, volume->size,
+                                              path.c_str(), decoded.data(),
+                                              decoded.size(), &decodedBytes)) {
+                        SDL_Log("GT4.VOL VFS read OK: %s (%zu decoded bytes)",
+                                path.c_str(), decodedBytes);
+                        char assetDetail[160];
+                        std::snprintf(assetDetail, sizeof(assetDetail),
+                                      " | sample file read: %zu bytes", decodedBytes);
+                        result += assetDetail;
+                        extracted = true;
+                        break;
+                    }
+                }
+            }
+            if (!extracted) {
+                SDL_Log("GT4.VOL VFS: no sample file could be decoded within 16 MiB output budget");
+                result += " | VFS sample not decoded (path/size/format check needed)";
+            }
         }
     }
     return result;
