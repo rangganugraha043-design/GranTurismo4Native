@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <unordered_map>
 #include <zlib.h>
 
 static uint16_t readLe16(const uint8_t* p);
@@ -299,6 +300,10 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                     node.storedSize = readLe32(meta + 9);
                     node.realSize = readLe32(meta + 13);
                 }
+                if (nodes.size() >= 100000) {
+                    report += "RoFS: jumlah node melewati batas pemeriksaan 100.000.\\n";
+                    return false;
+                }
                 nodes.push_back(std::move(node));
             } else {
                 const uint32_t childPage = readLe32(page.data() + tocPos + 4);
@@ -310,43 +315,52 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         }
         if (pageType == 0) ++recordPages; else ++indexPages;
     }
-    if (nodes.size() > 100000) {
-        report += "RoFS: jumlah node melebihi batas aman.\n";
-        return false;
-    }
-
     std::vector<std::string> paths(nodes.size());
-    std::vector<bool> resolved(nodes.size(), false);
-    // Directory node IDs form the parent links. Resolve iteratively so record
-    // page ordering does not have to match directory creation order.
-    for (size_t pass = 0; pass < nodes.size() + 1; ++pass) {
-        bool changed = false;
-        for (size_t i = 0; i < nodes.size(); ++i) {
-            if (resolved[i]) continue;
-            const RoFsNode& node = nodes[i];
-            std::string parentPath;
-            if (node.parent == 0) {
-                parentPath.clear();
-            } else {
-                bool foundParent = false;
-                for (size_t j = 0; j < nodes.size(); ++j) {
-                    if (nodes[j].type == 0 && nodes[j].nodeId == node.parent && resolved[j]) {
-                        parentPath = paths[j];
-                        foundParent = true;
-                        break;
-                    }
-                }
-                if (!foundParent) continue;
-            }
-            paths[i] = parentPath.empty() ? node.name : parentPath + "/" + node.name;
-            resolved[i] = true;
-            changed = true;
-        }
-        if (!changed) break;
+    std::vector<uint8_t> pathState(nodes.size(), 0); // 0=unvisited, 1=visiting, 2=resolved/blocked
+    std::unordered_map<uint32_t, size_t> directoryById;
+    directoryById.reserve(nodes.size());
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (nodes[i].type == 0) directoryById.emplace(nodes[i].nodeId, i);
     }
     size_t resolvedCount = 0, fileCount = 0, dirCount = 0, compressedCount = 0;
     for (size_t i = 0; i < nodes.size(); ++i) {
-        if (!resolved[i]) continue;
+        if (pathState[i] == 2) continue;
+        std::vector<size_t> chain;
+        size_t current = i;
+        std::string basePath;
+        bool canResolve = false;
+        while (true) {
+            if (pathState[current] == 2) {
+                canResolve = !paths[current].empty() || nodes[current].parent == 0;
+                basePath = paths[current];
+                break;
+            }
+            if (pathState[current] == 1) break; // malformed parent cycle
+            pathState[current] = 1;
+            chain.push_back(current);
+            const uint32_t parentId = nodes[current].parent;
+            if (parentId == 0) {
+                canResolve = true;
+                break;
+            }
+            const auto parent = directoryById.find(parentId);
+            if (parent == directoryById.end()) break;
+            current = parent->second;
+        }
+        if (canResolve) {
+            for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                const size_t index = *it;
+                paths[index] = basePath.empty() ? nodes[index].name
+                                                : basePath + "/" + nodes[index].name;
+                basePath = paths[index];
+                pathState[index] = 2;
+            }
+        } else {
+            for (size_t index : chain) pathState[index] = 2;
+        }
+    }
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        if (pathState[i] != 2 || paths[i].empty()) continue;
         ++resolvedCount;
         if (nodes[i].type == 0) ++dirCount;
         else {
