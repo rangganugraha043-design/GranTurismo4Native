@@ -1,0 +1,16 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="512dp" android:height="512dp"
+    android:viewportWidth="512" android:viewportHeight="512">
+    <path android:fillColor="#050608" android:pathData="M0,0h512v512h-512z"/>
+    <path android:fillColor="#101318" android:pathData="M36,16h440a20,20 0,0 1,20 20v440a20,20 0,0 1,-20 20h-440a20,20 0,0 1,-20 -20v-440a20,20 0,0 1,20 -20z"/>
+    <path android:strokeColor="#BFC5CC" android:strokeWidth="5" android:fillColor="#00000000" android:pathData="M38,18h436a20,20 0,0 1,20 20v436a20,20 0,0 1,-20 20h-436a20,20 0,0 1,-20 -20v-436a20,20 0,0 1,20 -20z"/>
+    <path android:fillColor="#252A31" android:pathData="M72,50h92l-92,92zM166,50h92l-92,92zM260,50h92l-92,92zM354,50h92l-92,92zM72,144h92l-92,92zM166,144h92l-92,92zM260,144h92l-92,92zM354,144h92l-92,92z"/>
+    <path android:fillColor="#075BE8" android:pathData="M220,112h96l-32,45h-76c-48,0 -86,25 -102,65 -15,38 -2,70 35,70h39l-27,47h-30c-78,0 -112,-64 -83,-135 29,-70 94,-92 180,-92z"/>
+    <path android:fillColor="#0340B7" android:pathData="M151,265h94l-28,48h-94z"/>
+    <path android:fillColor="#F10D20" android:pathData="M285,112h144l-27,47h-91l-69,120h-55l83,-144c4,-14 8,-23 15,-23z"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M74,365h31l-6,18h-12l-3,10h12l-5,17h-12l-3,10h14l-6,18h-34zM115,365h25l-6,73h-21l3,-42 -17,42h-17zM151,365h29l-8,55h19l-6,18h-42zM190,365h29l-20,73h-29zM226,365h29l-20,73h-29zM265,365h26l-8,29 17,-29h27l-28,40 8,33h-28l-5,-27 -8,27h-27zM342,365h29l-20,73h-29zM383,365h26l-6,23h-26l-3,10h24l-6,18h-24l-3,22h-29l20,-73z"/>
+    <path android:fillColor="#D9DDE2" android:pathData="M421,354h30l-9,35h20l-7,24h-20l-7,25h-27l7,-25h-36l7,-23zM414,389l-15,25h22l7,-25z"/>
+    <path android:fillColor="#1475FF" android:pathData="M76,466h175v7h-175z"/>
+    <path android:fillColor="#F20B20" android:pathData="M270,466h166v7h-166z"/>
+    <path android:fillColor="#C7CDD4" android:pathData="M172,490h14l-2,7h-14zM205,490h14l-2,7h-14zM238,490h14l-2,7h-14zM271,490h14l-2,7h-14zM304,490h14l-2,7h-14zM337,490h14l-2,7h-14z"/>
+</vector>
