@@ -181,3 +181,11 @@ A source-level cross-check against GT4FS showed two details worth correcting in 
 Second, compressed file records are not bare raw-DEFLATE streams. Their stored payload begins with an 8-byte PS2Zip wrapper: magic `C5 EE F7 FF`, followed by the negative expanded byte count in little-endian, followed by the raw-DEFLATE stream. The bounded payload validator now checks this wrapper and inflates only the bytes after it, matching the TOC compressed-size/real-size metadata. The root directory entry (`.` with parent ID 0) is treated as the root path rather than a literal folder name.
 
 Reference implementation used for format cross-check: https://github.com/Razer2015/GT4FS (Volume.cs, TocHeader.cs, BTree.cs, PS2Zip.cs).
+
+## 10. Path-based RoFS file reader (2026-11-08)
+
+The native RoFS parser now exposes a bounded C ABI function, `gt4_read_rofs_file_fd`, alongside the inspection API. It accepts the already-open ISO file descriptor, the GT4.VOL byte offset and size, a normalized path within the volume, an output buffer, and an output-size pointer. It reparses and validates the v3.1 TOC, resolves the exact path case-insensitively, validates the payload range, and returns raw file bytes for type-1 records or verifies the 8-byte PS2Zip wrapper and raw-DEFLATE stream for type-2 records.
+
+Safety limits: requested expanded files are capped at 64 MiB; the caller must provide a sufficiently large output buffer; all file ranges are checked against the volume and signed file-offset bounds. The function does not write files to shared storage and does not interpret model, texture, sound, movie, or database formats. The SDL runtime does not yet call this new read API; the next integration step is to provide a VFS bridge and a real asset-path request from the engine.
+
+This is a parser/API milestone only. It does not mean the game assets have been decoded or that GT4 can boot or render a race.
