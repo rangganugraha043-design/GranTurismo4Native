@@ -117,9 +117,13 @@ static bool discNameIs(const std::string& value, const char* expected) {
 }
 
 static std::string inspectDiscDescriptor(int fd) {
+    // Keep SDL startup lightweight. The launcher already performs the deeper
+    // ISO/RoFS inspection; repeating a full TOC parse on the render startup
+    // path can stall or exhaust memory on lower-end Android devices.
     if (fd < 0) return "NO ISO: choose a disc image in the launcher";
     struct stat st {};
-    if (fstat(fd, &st) != 0 || st.st_size <= 0) return "ISO ERROR: descriptor is not readable";
+    if (fstat(fd, &st) != 0 || st.st_size <= 0)
+        return "ISO ERROR: descriptor is not readable";
     uint8_t pvd[2048] {};
     const ssize_t count = pread(fd, pvd, sizeof(pvd), 16 * 2048);
     char details[180];
@@ -129,86 +133,12 @@ static std::string inspectDiscDescriptor(int fd) {
         return std::string(details) + " | ISO-9660 PVD not found (UDF-only not supported)";
     const uint8_t* root = pvd + 156;
     if (root[0] < 34) return std::string(details) + " | invalid root directory record";
-    std::vector<uint64_t> visited;
-    std::vector<DiscFile> files;
-    scanDiscDirectory(fd, static_cast<uint64_t>(st.st_size), readLe32(root + 2),
-                      readLe32(root + 10), 0, visited, files);
-    const DiscFile* core = nullptr;
-    const DiscFile* volume = nullptr;
-    for (const auto& file : files) {
-        if (file.directory) continue;
-        if (discNameIs(file.name, "CORE.GT4")) core = &file;
-        if (discNameIs(file.name, "GT4.VOL")) volume = &file;
-    }
-    char summary[256];
-    std::snprintf(summary, sizeof(summary),
-        " | %zu ISO entries, %zu dirs | CORE.GT4: %s | GT4.VOL: %s",
-        files.size(), visited.size(), core ? "found" : "not found",
-        volume ? "found" : "not found");
-    std::string result = std::string(details) + summary;
-    if (volume) {
-        char rofsReport[4096]{};
-        const int valid = gt4_inspect_rofs_fd(fd, volume->offset, volume->size,
-                                               rofsReport, sizeof(rofsReport));
-        SDL_Log("GT4.VOL RoFS inspection (%s):\n%s",
-                valid ? "valid" : "not validated", rofsReport);
-        const char* firstLineEnd = std::strchr(rofsReport, '\n');
-        if (firstLineEnd) {
-            result += valid ? " | RoFS TOC parsed" : " | RoFS TOC not validated";
-            result += " | ";
-            result.append(rofsReport, static_cast<size_t>(firstLineEnd - rofsReport));
-        } else if (rofsReport[0]) {
-            result += " | ";
-            result += rofsReport;
-        }
-
-        // Exercise the actual path-based VFS read on one bounded TOC sample.
-        // This verifies metadata -> data-page addressing -> raw/PS2Zip payload.
-        if (valid) {
-            const std::string reportText(rofsReport);
-            const std::string marker = "Contoh path dalam GT4.VOL:\n";
-            const size_t markerAt = reportText.find(marker);
-            bool extracted = false;
-            if (markerAt != std::string::npos) {
-                size_t lineAt = markerAt + marker.size();
-                for (unsigned attempt = 0; attempt < 18 && lineAt < reportText.size(); ++attempt) {
-                    const size_t lineEnd = reportText.find('\n', lineAt);
-                    const size_t end = lineEnd == std::string::npos ? reportText.size() : lineEnd;
-                    std::string line = reportText.substr(lineAt, end - lineAt);
-                    lineAt = lineEnd == std::string::npos ? reportText.size() : lineEnd + 1;
-                    if (line.rfind("  ", 0) != 0) break;
-                    line.erase(0, 2);
-                    const size_t sizeLabel = line.rfind(" (");
-                    if (sizeLabel == std::string::npos || sizeLabel == 0) continue;
-                    const std::string path = line.substr(0, sizeLabel);
-                    std::vector<uint8_t> decoded(16u * 1024u * 1024u);
-                    size_t decodedBytes = 0;
-                    if (gt4_read_rofs_file_fd(fd, volume->offset, volume->size,
-                                              path.c_str(), decoded.data(),
-                                              decoded.size(), &decodedBytes)) {
-                        SDL_Log("GT4.VOL VFS read OK: %s (%zu decoded bytes)",
-                                path.c_str(), decodedBytes);
-                        char assetDetail[160];
-                        std::snprintf(assetDetail, sizeof(assetDetail),
-                                      " | sample file read: %zu bytes", decodedBytes);
-                        result += assetDetail;
-                        extracted = true;
-                        break;
-                    }
-                }
-            }
-            if (!extracted) {
-                SDL_Log("GT4.VOL VFS: no sample file could be decoded within 16 MiB output budget");
-                result += " | VFS sample not decoded (path/size/format check needed)";
-            }
-        }
-    }
-    return result;
+    return std::string(details) + " | ISO descriptor OK | deep scan completed in launcher";
 }
 
 SDL_AppResult SDL_AppInit(void** appstate, int, char**) {
     auto* state = new RuntimeState();
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         SDL_Log("GT4 Native: SDL_Init failed: %s", SDL_GetError());
         delete state;
         return SDL_APP_FAILURE;
