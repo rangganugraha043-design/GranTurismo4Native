@@ -119,17 +119,15 @@ static uint16_t readLe16(const uint8_t* p) {
 
 static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                                     uint64_t volumeBytes, std::string& report) {
-    // Retail GT4 uses a RoFS v3.1 volume. Its real TOC header is at page
-    // 0x2159 (0x800 bytes/page); the apparent GT3-like header at byte 0 is a decoy.
     constexpr uint64_t pageBytes = 0x800;
     constexpr uint64_t retailTocPage = 0x2159;
     constexpr uint32_t offsetKey = 0x14ac327a;
-    constexpr uint32_t maxPages = 1u << 20;
-    constexpr uint32_t maxTocBytes = 64u * 1024u * 1024u;
+    constexpr uint32_t maxPages = 1u << 18;
+    constexpr uint32_t maxCompressedPage = 1024u * 1024u;
     const uint64_t headerOffset = retailTocPage * pageBytes;
     if (volumeBytes < headerOffset + 0x40 ||
         volumeOffset > UINT64_MAX - headerOffset) {
-        report += "RoFS: volume terlalu kecil untuk header TOC retail GT4.\n";
+        report += "RoFS: volume terlalu kecil untuk TOC retail GT4.\n";
         return false;
     }
     uint8_t header[0x40]{};
@@ -145,28 +143,26 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     const uint32_t totalPages = readLe32(header + 12);
     const uint16_t pageLength = readLe16(header + 16);
     const uint16_t tocPages = readLe16(header + 18);
-    const bool encryptedMagic = magic == 0xAD90B9ACu;
-    const bool plainMagic = magic == 0x53466F52u; // "RoFS"
+    const bool encrypted = magic == 0xAD90B9ACu;
+    const bool plain = magic == 0x53466F52u;
     char summary[256];
     std::snprintf(summary, sizeof(summary),
-        "RoFS header @0x%llX: magic=0x%08X, version=%u.%u, page=0x%X, pages=%u, TOC pages=%u, compressed TOC=%u bytes.\n",
-        static_cast<unsigned long long>(headerOffset), magic, major, minor,
+        "RoFS v%u.%u: header 0x%llX, page 0x%X, total pages=%u, TOC pages=%u, compressed TOC=%u bytes.\n",
+        major, minor, static_cast<unsigned long long>(headerOffset),
         pageLength, totalPages, tocPages, compressedTocBytes);
     report += summary;
-    if ((!encryptedMagic && !plainMagic) || major != 3 || minor != 1 ||
+    if ((!encrypted && !plain) || major != 3 || minor != 1 ||
         pageLength != pageBytes || totalPages == 0 || totalPages > maxPages ||
         tocPages == 0 || tocPages > totalPages ||
-        compressedTocBytes == 0 || compressedTocBytes > maxTocBytes) {
-        report += "RoFS: header bukan RoFS v3.1 retail yang valid atau field di luar batas.\n";
+        compressedTocBytes == 0 || compressedTocBytes > 64u * 1024u * 1024u) {
+        report += "RoFS: header bukan RoFS v3.1 yang valid atau field di luar batas.\n";
         return false;
     }
-    // The page-offset array has totalPages+1 little-endian values.
-    // Retail stores them XOR-obfuscated; plain RoFS magic means no encryption.
-    const uint64_t offsetCount = uint64_t(totalPages) + 1;
-    if (offsetCount > (UINT64_MAX - 0x40) / 4) return false;
+    // GT4FS reference: EntryCount+1 offsets, XORed with key*(index+1).
+    const uint64_t offsetCount = uint64_t(tocPages) + 1;
     const uint64_t tableBytes = offsetCount * 4;
-    if (0x40 + tableBytes > volumeBytes - headerOffset) {
-        report += "RoFS: tabel page-offset melewati batas file volume.\n";
+    if (tableBytes > volumeBytes - headerOffset - 0x40) {
+        report += "RoFS: tabel page-offset melewati batas volume.\n";
         return false;
     }
     std::vector<uint8_t> table(static_cast<size_t>(tableBytes));
@@ -176,23 +172,97 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
         report += "RoFS: gagal membaca tabel page-offset.\n";
         return false;
     }
+    std::vector<uint32_t> offsets;
+    offsets.reserve(static_cast<size_t>(offsetCount));
     uint32_t previous = 0;
-    bool offsetsValid = true;
-    for (uint32_t i = 0; i <= totalPages; ++i) {
-        const uint32_t stored = readLe32(table.data() + size_t(i) * 4);
-        const uint32_t decoded = plainMagic
-            ? stored : (stored ^ (uint32_t(i * offsetKey) + offsetKey));
-        if (i && decoded < previous) offsetsValid = false;
-        if (decoded > compressedTocBytes) offsetsValid = false;
-        previous = decoded;
+    for (uint32_t i = 0; i < offsetCount; ++i) {
+        uint32_t value = readLe32(table.data() + size_t(i) * 4);
+        if (encrypted) value ^= offsetKey * (i + 1u);
+        if ((i && value <= previous) || value > volumeBytes) {
+            report += "RoFS: offset halaman tidak monoton atau di luar volume.\n";
+            return false;
+        }
+        offsets.push_back(value);
+        previous = value;
     }
-    if (!offsetsValid) {
-        report += "RoFS: tabel offset tidak monoton/di luar rentang TOC; tidak akan diekstrak.\n";
-        return false;
+    uint32_t recordPages = 0, indexPages = 0;
+    for (uint32_t i = 0; i < tocPages; ++i) {
+        const uint32_t begin = offsets[i], finish = offsets[i + 1];
+        if (finish <= begin || finish - begin > maxCompressedPage ||
+            uint64_t(begin) + volumeOffset > uint64_t(INT64_MAX)) {
+            report += "RoFS: ukuran/rentang compressed page tidak valid.\n";
+            return false;
+        }
+        std::vector<uint8_t> packed(finish - begin);
+        if (pread(fd, packed.data(), packed.size(),
+                  static_cast<off_t>(volumeOffset + begin)) !=
+            static_cast<ssize_t>(packed.size())) {
+            report += "RoFS: gagal membaca compressed page.\n";
+            return false;
+        }
+        std::vector<uint8_t> page(pageLength);
+        z_stream stream{};
+        stream.next_in = packed.data();
+        stream.avail_in = static_cast<uInt>(packed.size());
+        stream.next_out = page.data();
+        stream.avail_out = static_cast<uInt>(page.size());
+        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) {
+            report += "RoFS: zlib gagal inisialisasi.\n";
+            return false;
+        }
+        const int inflateResult = inflate(&stream, Z_FINISH);
+        const uint64_t produced = stream.total_out;
+        inflateEnd(&stream);
+        if (inflateResult != Z_STREAM_END || produced != pageLength) {
+            report += "RoFS: TOC page gagal didekompresi ke ukuran page yang tepat.\n";
+            return false;
+        }
+        if (encrypted) for (auto& byte : page) byte ^= 0x55;
+        const uint16_t pageType = readLe16(page.data());
+        const uint16_t entryCount = readLe16(page.data() + 2);
+        const int32_t nextPage = static_cast<int32_t>(readLe32(page.data() + 4));
+        const int32_t prevPage = static_cast<int32_t>(readLe32(page.data() + 8));
+        if (pageType > 1 || entryCount > pageLength / 4 ||
+            (entryCount & 1u) == 0 ||
+            (nextPage != -1 && (nextPage < 0 || uint32_t(nextPage) >= tocPages)) ||
+            (prevPage != -1 && (prevPage < 0 || uint32_t(prevPage) >= tocPages))) {
+            report += "RoFS: header page tidak valid.\n";
+            return false;
+        }
+        const uint32_t entries = entryCount / 2;
+        for (uint32_t n = 0; n < entries; ++n) {
+            const size_t tocPos = pageLength - 8u * (n + 1u);
+            const uint16_t entryOffset = readLe16(page.data() + tocPos);
+            const uint16_t entryLength = readLe16(page.data() + tocPos + 2);
+            if (entryOffset < 12 || entryLength == 0 ||
+                uint32_t(entryOffset) + entryLength > pageLength) {
+                report += "RoFS: referensi entri TOC keluar dari batas page.\n";
+                return false;
+            }
+            if (pageType == 0) {
+                const uint16_t typeOffset = readLe16(page.data() + tocPos + 4);
+                const uint16_t typeLength = readLe16(page.data() + tocPos + 6);
+                if (typeLength < 5 || uint32_t(typeOffset) + typeLength > pageLength ||
+                    page[typeOffset] > 2) {
+                    report += "RoFS: metadata node pada record page tidak valid.\n";
+                    return false;
+                }
+            } else {
+                const uint32_t childPage = readLe32(page.data() + tocPos + 4);
+                if (childPage >= tocPages) {
+                    report += "RoFS: referensi child page pada index page tidak valid.\n";
+                    return false;
+                }
+            }
+        }
+        if (pageType == 0) ++recordPages; else ++indexPages;
     }
-    report += encryptedMagic
-        ? "RoFS: magic dan tabel offset terenkripsi dikenali; indeks node belum didekode.\n"
-        : "RoFS: magic tidak terenkripsi; indeks node belum didekode.\n";
+    char result[192];
+    std::snprintf(result, sizeof(result),
+        "RoFS TOC: %u/%u page berhasil didekompresi dan divalidasi (%u record, %u index).\n",
+        tocPages, tocPages, recordPages, indexPages);
+    report += result;
+    report += "RoFS: halaman TOC tervalidasi; resolusi path/node dan ekstraksi file belum tersedia.\n";
     return true;
 }
 
