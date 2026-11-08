@@ -19,7 +19,7 @@ FetchContent_Declare(SDL3
 FetchContent_MakeAvailable(SDL3)
 
 add_library(main SHARED sdl-main.cpp)
-target_link_libraries(main PRIVATE SDL3::SDL3)
+target_link_libraries(main PRIVATE SDL3::SDL3 gt4native)
 
 add_library(gt4native SHARED native-lib.cpp)
 find_library(log-lib log)
