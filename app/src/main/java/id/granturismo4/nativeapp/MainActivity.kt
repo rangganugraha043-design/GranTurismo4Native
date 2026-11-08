@@ -54,7 +54,7 @@ class MainActivity : Activity() {
         }
         val build = TextView(this).apply {
             text = "Native core: " + nativeVersion() +
-                "\nStatus: ISO scanner + SDL3 runtime; handoff ISO sedang dikembangkan."
+                "\nStatus: ISO + GT4.VOL reader + SDL3 runtime; game engine masih dikembangkan."
             textSize = 12f
             setPadding(0, 24, 0, 0)
         }
