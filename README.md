@@ -34,3 +34,6 @@ The scanner does not yet support UDF-only images, multi-extent ISO files, or tra
 ### GT4 RoFS index progress (2026-11-08)
 
 The read-only GT4.VOL inspector now decompresses every v3.1 TOC page, validates record/index page structures and record metadata ranges, reads parent node IDs and directory/file metadata, and resolves paths by following directory node IDs. It reports a bounded sample of discovered file paths and sizes. It still does not read file payload pages, inflate compressed assets, decode textures/models/audio, or start the GT4 runtime. The parser currently targets the retail GT4 TOC location (`0x2159` pages) and is not a universal parser for every GT4-family volume.
+
+
+The inspector also performs a bounded sample of file-payload reads using the RoFS data-start/page-offset calculation. For compressed records it attempts raw-DEFLATE expansion and checks the declared output size; this is a format-validation step, not yet a complete asset extraction/decoding pipeline.
