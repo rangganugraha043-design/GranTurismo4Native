@@ -137,3 +137,16 @@ The GT3 project's public Android guide recommends Snapdragon 865-class hardware 
 ## 6. Current project decision
 
 For this repository, the safest immediate acceleration is to **reuse research, specifications, and test ideas first**, not import a large unrelated emulator or recompiler wholesale. The GT4 decompilation is the strongest game-specific reference; PS2Recomp is a useful CPU/recompiler design reference; PS2Docs is the hardware reference shelf; ARMSX2 is an Android/ARM64 integration reference.
+
+
+## 7. GT4 RoFS volume format (2026-11-08)
+
+Primary format reference: https://nenkai.github.io/gt-modding-hub/formats/volume/ps2_gt4_volume/
+
+- Retail GT4 uses a RoFS v3.1 volume, not the GT3 archive layout. The apparent GT3-like TOC at the beginning is a decoy.
+- For retail GT4, the real TOC header is located at page `0x2159`, with `0x800` bytes per page.
+- Header fields include magic (`AC B9 90 AD` encrypted or `RoFS` unencrypted), version 3.1, compressed TOC length, total page count, page length, and TOC page count.
+- The page-offset array follows the 0x40-byte header. Encrypted offsets are decoded using the documented key `0x14AC327A`; TOC page payloads use byte XOR key `0x55` before decompression.
+- Each page has a reverse TOC at its end. Pages are either index pages or entry pages. Entry node types are directory (0), file (1), or compressed file (2).
+- Current implementation only validates the retail header and bounded page-offset table. It does **not** yet decrypt/decompress TOC page payloads, decode B-tree nodes, resolve file paths, or read compressed file contents. Do not report the archive as extracted or fully parsed.
+- The fixed retail TOC page is not assumed to apply to Tourist Trophy, demos, online builds, or every regional/revision variant; those require separate signatures/profile handling.
