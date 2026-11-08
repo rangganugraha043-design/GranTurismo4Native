@@ -393,9 +393,9 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     if (fileOutputSize) *fileOutputSize = 0;
     if (requestedPath && requestedPath[0] != '\0') {
         std::string wanted(requestedPath);
-        while (!wanted.empty() && (wanted.front() == '/' || wanted.front() == '\\\\'))
+        while (!wanted.empty() && (wanted.front() == '/' || wanted.front() == '\\'))
             wanted.erase(wanted.begin());
-        for (char& ch : wanted) if (ch == '\\\\') ch = '/';
+        for (char& ch : wanted) if (ch == '\\') ch = '/';
         auto equalPath = [](const std::string& a, const std::string& b) {
             if (a.size() != b.size()) return false;
             for (size_t k = 0; k < a.size(); ++k) {
@@ -412,13 +412,13 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                 equalPath(paths[i], wanted)) { found = i; break; }
         }
         if (found == nodes.size()) {
-            report += "RoFS read: file path tidak ditemukan.\\n";
+            report += "RoFS read: file path tidak ditemukan.\n";
             return false;
         }
         const RoFsNode& node = nodes[found];
         if (node.realSize == 0 || node.realSize > 64u * 1024u * 1024u ||
             !fileOutput || node.realSize > fileOutputCapacity) {
-            report += "RoFS read: ukuran file tidak valid atau buffer output terlalu kecil.\\n";
+            report += "RoFS read: ukuran file tidak valid atau buffer output terlalu kecil.\n";
             return false;
         }
         const uint64_t dataStart = headerOffset + uint64_t(totalPages) * pageLength;
@@ -427,26 +427,26 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             node.storedSize > volumeBytes - relative ||
             relative > uint64_t(INT64_MAX) ||
             volumeOffset > uint64_t(INT64_MAX) - relative) {
-            report += "RoFS read: rentang payload di luar batas volume.\\n";
+            report += "RoFS read: rentang payload di luar batas volume.\n";
             return false;
         }
         std::vector<uint8_t> stored(node.storedSize);
         if (pread(fd, stored.data(), stored.size(),
                   static_cast<off_t>(volumeOffset + relative)) !=
             static_cast<ssize_t>(stored.size())) {
-            report += "RoFS read: gagal membaca payload file.\\n";
+            report += "RoFS read: gagal membaca payload file.\n";
             return false;
         }
         if (node.type == 1) {
             if (node.storedSize != node.realSize) {
-                report += "RoFS read: ukuran file mentah tidak cocok dengan metadata.\\n";
+                report += "RoFS read: ukuran file mentah tidak cocok dengan metadata.\n";
                 return false;
             }
             std::memcpy(fileOutput, stored.data(), stored.size());
         } else if (node.type == 2) {
             if (stored.size() < 9 || readBe32Local(stored.data()) != 0xC5EEF7FFu ||
                 readLe32(stored.data() + 4) != (0u - node.realSize)) {
-                report += "RoFS read: wrapper PS2Zip tidak valid.\\n";
+                report += "RoFS read: wrapper PS2Zip tidak valid.\n";
                 return false;
             }
             z_stream fileStream{};
@@ -455,7 +455,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             fileStream.next_out = fileOutput;
             fileStream.avail_out = static_cast<uInt>(node.realSize);
             if (inflateInit2(&fileStream, -MAX_WBITS) != Z_OK) {
-                report += "RoFS read: zlib gagal diinisialisasi.\\n";
+                report += "RoFS read: zlib gagal diinisialisasi.\n";
                 return false;
             }
             const int inflateStatus = inflate(&fileStream, Z_FINISH);
@@ -464,15 +464,15 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             inflateEnd(&fileStream);
             if (inflateStatus != Z_STREAM_END || outputBytes != node.realSize ||
                 inputBytes != stored.size() - 8) {
-                report += "RoFS read: dekompresi PS2Zip tidak utuh.\\n";
+                report += "RoFS read: dekompresi PS2Zip tidak utuh.\n";
                 return false;
             }
         } else {
-            report += "RoFS read: tipe node tidak didukung.\\n";
+            report += "RoFS read: tipe node tidak didukung.\n";
             return false;
         }
         if (fileOutputSize) *fileOutputSize = node.realSize;
-        report += "RoFS read: file berhasil dibaca dan didekompresi: " + paths[found] + "\\n";
+        report += "RoFS read: file berhasil dibaca dan didekompresi: " + paths[found] + "\n";
         return true;
     }
 
