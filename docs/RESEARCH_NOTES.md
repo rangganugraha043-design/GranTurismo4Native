@@ -148,5 +148,15 @@ Primary format reference: https://nenkai.github.io/gt-modding-hub/formats/volume
 - Header fields include magic (`AC B9 90 AD` encrypted or `RoFS` unencrypted), version 3.1, compressed TOC length, total page count, page length, and TOC page count.
 - The page-offset array follows the 0x40-byte header. Encrypted offsets are decoded using the documented key `0x14AC327A`; TOC page payloads use byte XOR key `0x55` before decompression.
 - Each page has a reverse TOC at its end. Pages are either index pages or entry pages. Entry node types are directory (0), file (1), or compressed file (2).
-- Current implementation only validates the retail header and bounded page-offset table. It does **not** yet decrypt/decompress TOC page payloads, decode B-tree nodes, resolve file paths, or read compressed file contents. Do not report the archive as extracted or fully parsed.
+- Current implementation validates the retail header and bounded page-offset table, then inflates each TOC page, applies the 0x55 XOR transform for encrypted volumes, and checks page headers plus reverse-TOC entry bounds and node metadata type. It does **not** yet traverse the B-tree, reconstruct directory paths, resolve file nodes, or read/decompress asset payloads. Do not report the archive as extracted or fully parsed.
 - The fixed retail TOC page is not assumed to apply to Tourist Trophy, demos, online builds, or every regional/revision variant; those require separate signatures/profile handling.
+
+
+### GT4FS reference cross-check
+
+The public GT4FS source was reviewed for the on-disk details that are easy to misread:
+- TOC page-offset count is `EntryCount + 1`, not `PageCount + 1`.
+- Encrypted offsets are XORed with the little-endian bytes of `OffsetCryptKey * (index + 1)`.
+- Each TOC page is raw-DEFLATE decompressed; encrypted page bytes are then XORed with `0x55`.
+- Record pages and index pages share a 0x0C-byte header and a reverse table of 8-byte entries, but their entry payloads differ.
+- The current C++ implementation independently follows these documented structures with explicit read-size, page-count, and range limits. It does not copy GT4FS implementation code.
