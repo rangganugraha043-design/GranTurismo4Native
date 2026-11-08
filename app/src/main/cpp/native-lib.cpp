@@ -440,7 +440,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     report += "Contoh path dalam GT4.VOL:\n";
     size_t shown = 0;
     for (size_t i = 0; i < nodes.size() && shown < 18; ++i) {
-        if (!resolved[i] || nodes[i].type == 0) continue;
+        if (pathState[i] != 2 || paths[i].empty() || nodes[i].type == 0) continue;
         char detail[96];
         std::snprintf(detail, sizeof(detail), "  %s (%u byte%s)\n",
             paths[i].c_str(), nodes[i].realSize, nodes[i].type == 2 ? ", compressed" : "");
@@ -449,7 +449,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     }
     if (resolvedCount != nodes.size())
         report += "Peringatan: sebagian node belum punya parent folder yang dikenali; belum ditampilkan sebagai path.\n";
-    report += "RoFS: path node berhasil dibangun. Pembacaan payload file dan dekompresi aset belum tersedia.\n";
+    report += "RoFS: path node berhasil dibangun; sample payload telah dibaca dan diperiksa. Decoder aset belum tersedia.\n";
     return true;
 }
 
