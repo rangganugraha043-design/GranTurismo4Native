@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "id.granturismo4.nativeapp"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "id.granturismo4.nativeapp"
@@ -14,7 +15,13 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         externalNativeBuild {
-            cmake { cppFlags += "-std=c++17" }
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += listOf(
+                    "-DANDROID_STL=c++_static",
+                    "-DFETCHCONTENT_SOURCE_DIR_SDL3=${rootProject.file("third_party/SDL").absolutePath}"
+                )
+            }
         }
     }
 
@@ -26,6 +33,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    sourceSets.getByName("main").java.srcDir(rootProject.file("third_party/SDL/android-project/app/src/main/java"))
 
     externalNativeBuild {
         cmake {
