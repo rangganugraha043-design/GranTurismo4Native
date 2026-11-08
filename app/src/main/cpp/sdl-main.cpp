@@ -13,6 +13,11 @@
 static int g_discFd = -1;
 static std::string g_discName = "No ISO selected";
 
+extern "C" int gt4_inspect_rofs_fd(int fd, uint64_t volumeOffset,
+                                    uint64_t volumeBytes, char* output,
+                                    size_t outputCapacity);
+
+
 extern "C" JNIEXPORT void JNICALL
 Java_id_granturismo4_nativeapp_NativeGameActivity_nativeSetDisc(
     JNIEnv* env, jclass, jint ownedFd, jstring displayName) {
@@ -136,7 +141,24 @@ static std::string inspectDiscDescriptor(int fd) {
         " | %zu ISO entries, %zu dirs | CORE.GT4: %s | GT4.VOL: %s",
         files.size(), visited.size(), core ? "found" : "not found",
         volume ? "found" : "not found");
-    return std::string(details) + summary;
+    std::string result = std::string(details) + summary;
+    if (volume) {
+        char rofsReport[4096]{};
+        const int valid = gt4_inspect_rofs_fd(fd, volume->offset, volume->size,
+                                               rofsReport, sizeof(rofsReport));
+        SDL_Log("GT4.VOL RoFS inspection (%s):\\n%s",
+                valid ? "valid" : "not validated", rofsReport);
+        const char* firstLineEnd = std::strchr(rofsReport, '\\n');
+        if (firstLineEnd) {
+            result += valid ? " | RoFS TOC parsed" : " | RoFS TOC not validated";
+            result += " | ";
+            result.append(rofsReport, static_cast<size_t>(firstLineEnd - rofsReport));
+        } else if (rofsReport[0]) {
+            result += " | ";
+            result += rofsReport;
+        }
+    }
+    return result;
 }
 
 SDL_AppResult SDL_AppInit(void** appstate, int, char**) {
