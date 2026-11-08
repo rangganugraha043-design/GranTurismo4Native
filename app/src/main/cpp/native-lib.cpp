@@ -372,7 +372,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
     // records use raw DEFLATE and must expand to the declared real size.
     uint32_t payloadRangesChecked = 0, payloadInflated = 0, payloadSkipped = 0;
     uint64_t payloadBudget = 16u * 1024u * 1024u;
-    const uint64_t dataStartInVolume = uint64_t(totalPages) * pageLength;
+    const uint64_t dataStartInVolume = headerOffset + uint64_t(totalPages) * pageLength;
     for (size_t i = 0; i < nodes.size() && payloadRangesChecked < 8; ++i) {
         const RoFsNode& node = nodes[i];
         if (pathState[i] != 2 || paths[i].empty() || node.type == 0) continue;
