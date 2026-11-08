@@ -574,7 +574,7 @@ static bool sameIsoName(const std::string& a, const char* b) {
 
 extern "C" JNIEXPORT jstring JNICALL
 Java_id_granturismo4_nativeapp_MainActivity_nativeVersion(JNIEnv* env, jobject) {
-    return env->NewStringUTF("GT4 Native Core 0.4 — disc content scanner");
+    return env->NewStringUTF("GT4 Native Core 0.5 — ISO + RoFS content reader");
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -731,7 +731,7 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
         ++shown;
     }
     appendReport(report, sizeof(report),
-        "Catatan: pemindaian ini hanya membaca metadata ISO-9660; UDF-only, multi-extent, dan GT4.VOL parsing belum didukung. Game belum dijalankan.");
+        "Catatan: ISO-9660 dan metadata RoFS GT4.VOL diperiksa secara read-only; UDF-only dan multi-extent belum didukung. Aset belum diekstrak/didekode dan game belum dijalankan.");
     return env->NewStringUTF(report);
 }
 
