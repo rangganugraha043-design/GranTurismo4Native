@@ -368,12 +368,74 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
             if (nodes[i].type == 2) ++compressedCount;
         }
     }
+    // Validate a bounded sample of actual file payload ranges. Compressed
+    // records use raw DEFLATE and must expand to the declared real size.
+    uint32_t payloadRangesChecked = 0, payloadInflated = 0, payloadSkipped = 0;
+    uint64_t payloadBudget = 16u * 1024u * 1024u;
+    const uint64_t dataStartInVolume = uint64_t(totalPages) * pageLength;
+    for (size_t i = 0; i < nodes.size() && payloadRangesChecked < 8; ++i) {
+        const RoFsNode& node = nodes[i];
+        if (pathState[i] != 2 || paths[i].empty() || node.type == 0) continue;
+        const uint32_t storedBytes = node.storedSize;
+        if (storedBytes == 0 || node.realSize == 0 ||
+            storedBytes > 4u * 1024u * 1024u ||
+            node.realSize > 16u * 1024u * 1024u ||
+            uint64_t(storedBytes) > payloadBudget) {
+            ++payloadSkipped;
+            continue;
+        }
+        const uint64_t relative = dataStartInVolume + uint64_t(node.pageOffset) * pageLength;
+        if (relative > volumeBytes || storedBytes > volumeBytes - relative ||
+            volumeOffset > uint64_t(INT64_MAX) - relative) {
+            ++payloadSkipped;
+            continue;
+        }
+        std::vector<uint8_t> payload(storedBytes);
+        if (pread(fd, payload.data(), payload.size(),
+                  static_cast<off_t>(volumeOffset + relative)) !=
+            static_cast<ssize_t>(payload.size())) {
+            ++payloadSkipped;
+            continue;
+        }
+        if (node.type == 2) {
+            std::vector<uint8_t> unpacked(node.realSize);
+            z_stream fileStream{};
+            fileStream.next_in = payload.data();
+            fileStream.avail_in = static_cast<uInt>(payload.size());
+            fileStream.next_out = unpacked.data();
+            fileStream.avail_out = static_cast<uInt>(unpacked.size());
+            if (inflateInit2(&fileStream, -MAX_WBITS) != Z_OK) {
+                ++payloadSkipped;
+                continue;
+            }
+            const int inflateStatus = inflate(&fileStream, Z_FINISH);
+            const uint64_t outputBytes = fileStream.total_out;
+            const uint64_t inputBytes = fileStream.total_in;
+            inflateEnd(&fileStream);
+            if (inflateStatus != Z_STREAM_END || outputBytes != node.realSize ||
+                inputBytes != payload.size()) {
+                ++payloadSkipped;
+                continue;
+            }
+            ++payloadInflated;
+        } else if (storedBytes != node.realSize) {
+            ++payloadSkipped;
+            continue;
+        }
+        ++payloadRangesChecked;
+        payloadBudget -= storedBytes;
+    }
     char result[256];
     std::snprintf(result, sizeof(result),
         "RoFS TOC: %u page (%u record, %u index); %zu node (%zu path terurai, %zu folder, %zu file, %zu compressed).\n",
         tocPages, recordPages, indexPages, nodes.size(), resolvedCount,
         dirCount, fileCount, compressedCount);
     report += result;
+    char payloadSummary[160];
+    std::snprintf(payloadSummary, sizeof(payloadSummary),
+        "Payload sample: %u file range terbaca, %u file terdekompresi, %u dilewati/tidak valid.\n",
+        payloadRangesChecked, payloadInflated, payloadSkipped);
+    report += payloadSummary;
     report += "Contoh path dalam GT4.VOL:\n";
     size_t shown = 0;
     for (size_t i = 0; i < nodes.size() && shown < 18; ++i) {
