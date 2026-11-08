@@ -12,7 +12,7 @@ This repository currently builds an Android shell with:
 - Read-only ISO-9660 signature and bounded recursive directory scan (up to 8 levels).
 - Detection of nested `SYSTEM.CNF`, its `BOOT2` path, and a basic ELF32/MIPS header.
 - Detection and bounded raw-DEFLATE/header inspection of `CORE.GT4`.
-- Detection of `GT4.VOL`, bounded validation of the retail RoFS v3.1 TOC header and encrypted page-offset table, and persisted access to the last selected document when Android permits it.
+- Detection of `GT4.VOL`, bounded validation of the retail RoFS v3.1 header, encrypted page-offset table, and decompressed TOC page structures, and persisted access to the last selected document when Android permits it.
 - GitHub Actions workflow for a debug APK.
 
 **The SDL3 screen is only a platform/runtime + ISO-descriptor handoff smoke test. It does not yet parse the full disc from SDL, render GT4 assets, run GT4 logic, or produce game audio. This is not a playable GT4 port yet.** A PS2 disc image contains software for the Emotion Engine (MIPS R5900), IOP (MIPS R3000A), vector units, DMA/VIF/GIF, Graphics Synthesizer and SPU2. Android ARM64 cannot run that software directly. A real port needs a CPU translation/runtime and substantial PS2 subsystem compatibility work.
@@ -28,4 +28,4 @@ APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 ## Development plan
 See [docs/PORTING_PLAN.md](docs/PORTING_PLAN.md) for the staged plan and [docs/RESEARCH_NOTES.md](docs/RESEARCH_NOTES.md) for reviewed external GT4/PS2 research, upstream links, license notes and reuse decisions.
 
-The scanner does not yet support UDF-only images, multi-extent ISO files, or decoding the RoFS B-tree/node pages and extracting files from `GT4.VOL`; it also does not load/execute the GT4 program. The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
+The scanner does not yet support UDF-only images, multi-extent ISO files, or traversing the RoFS B-tree, resolving file paths, and extracting/decompressing file payloads from `GT4.VOL`; it also does not load/execute the GT4 program. The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
