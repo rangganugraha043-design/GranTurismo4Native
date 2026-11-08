@@ -301,7 +301,7 @@ static bool inspectGt4RofsHeader(int fd, uint64_t volumeOffset,
                     node.realSize = readLe32(meta + 13);
                 }
                 if (nodes.size() >= 100000) {
-                    report += "RoFS: jumlah node melewati batas pemeriksaan 100.000.\\n";
+                    report += "RoFS: jumlah node melewati batas pemeriksaan 100.000.\n";
                     return false;
                 }
                 nodes.push_back(std::move(node));
