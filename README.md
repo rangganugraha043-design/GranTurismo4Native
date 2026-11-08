@@ -29,3 +29,8 @@ APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 See [docs/PORTING_PLAN.md](docs/PORTING_PLAN.md) for the staged plan and [docs/RESEARCH_NOTES.md](docs/RESEARCH_NOTES.md) for reviewed external GT4/PS2 research, upstream links, license notes and reuse decisions.
 
 The scanner does not yet support UDF-only images, multi-extent ISO files, or traversing the RoFS B-tree, resolving file paths, and extracting/decompressing file payloads from `GT4.VOL`; it also does not load/execute the GT4 program. The app does not bundle game images or BIOS files. Use only a disc image you are legally entitled to use.
+
+
+### GT4 RoFS index progress (2026-11-08)
+
+The read-only GT4.VOL inspector now decompresses every v3.1 TOC page, validates record/index page structures and record metadata ranges, reads parent node IDs and directory/file metadata, and resolves paths by following directory node IDs. It reports a bounded sample of discovered file paths and sizes. It still does not read file payload pages, inflate compressed assets, decode textures/models/audio, or start the GT4 runtime. The parser currently targets the retail GT4 TOC location (`0x2159` pages) and is not a universal parser for every GT4-family volume.
