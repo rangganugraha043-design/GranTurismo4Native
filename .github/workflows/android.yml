@@ -38,6 +38,9 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Fetch SDL3 source and Android Java glue
+        run: bash android/fetch-sdl.sh
+
       - name: Build debug APK
         run: gradle --no-daemon assembleDebug
 
