@@ -104,3 +104,15 @@ The repository now includes a minimal SDL3 Android activity and native render lo
 - Added a minimal SDL callback lifecycle, SDL renderer loop, touch-event feedback, and controller connection logging.
 - Added CI checkout of SDL3 before Gradle config/build; the SDL source checkout is ignored and is not committed into this repository.
 - This is a platform smoke test only. It does not yet implement GT4 gameplay, GT4 rendering, audio playback, SAF handoff into SDL, or a complete controller mapping.
+
+
+## RoFS payload-reader checkpoint (2026-11-08)
+
+- The shared C API exposes read-only path-based payload access from a selected GT4.VOL file-descriptor range.
+- File lookup is case-insensitive and normalizes leading slashes and backslashes.
+- Raw records are copied only when stored and declared sizes agree.
+- Compressed records validate the PS2Zip magic and negative expanded-size field, then require raw-DEFLATE to consume the full stored payload and produce exactly the declared byte count.
+- Output is bounded by the caller's buffer and a 64 MiB per-file ceiling.
+- SDL startup tries one discovered sample path with a 16 MiB output budget and logs the result.
+- The parser currently rebuilds the TOC index for each read; caching, a persistent VFS, fixtures from real disc revisions, and complete asset decoders remain future work.
+- Latest CI run `42455852963` passed `assembleDebug` after the SDL payload-read integration. This is compile evidence only, not a real-disc or device test.
