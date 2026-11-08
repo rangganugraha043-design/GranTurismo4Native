@@ -734,3 +734,15 @@ Java_id_granturismo4_nativeapp_MainActivity_inspectIsoHeader(JNIEnv* env, jobjec
         "Catatan: pemindaian ini hanya membaca metadata ISO-9660; UDF-only, multi-extent, dan GT4.VOL parsing belum didukung. Game belum dijalankan.");
     return env->NewStringUTF(report);
 }
+
+
+extern "C" int gt4_inspect_rofs_fd(int fd, uint64_t volumeOffset,
+                                    uint64_t volumeBytes, char* output,
+                                    size_t outputCapacity) {
+    if (!output || outputCapacity == 0) return 0;
+    output[0] = '\0';
+    std::string report;
+    const bool valid = inspectGt4RofsHeader(fd, volumeOffset, volumeBytes, report);
+    std::snprintf(output, outputCapacity, "%s", report.c_str());
+    return valid ? 1 : 0;
+}
