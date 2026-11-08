@@ -6,6 +6,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <utility>
 #include <zlib.h>
 
 static uint16_t readLe16(const uint8_t* p);
